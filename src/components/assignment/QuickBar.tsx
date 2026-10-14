@@ -93,6 +93,7 @@ export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSett
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
   const rate = s.autoMistake ? s.mistakeRate : 0;
+  const [more, setMore] = useState(false);
   const setRate = (r: number) => onSettings(r <= 0 ? { autoMistake: false } : { autoMistake: true, mistakeRate: r });
   const aligns: { id: TextAlign; icon: ReactNode }[] = [
     { id: 'left', icon: <AlignLeft size={16} /> },
@@ -101,6 +102,7 @@ export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSett
   ];
 
   return (
+    <div className="qb-wrap">
     <nav className="qb" aria-label="Quick handwriting controls">
       <button type="button" className={`qb-btn qb-pill${s.combineFonts ? ' on' : ''}`} aria-pressed={s.combineFonts} onClick={() => onSettings({ combineFonts: !s.combineFonts })}>
         <Layers size={15} />Combine
@@ -192,14 +194,39 @@ export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSett
         <button type="button" className="qb-btn" aria-label="More mistakes" disabled={rate >= 10} onClick={() => setRate(rate + 1)}><Plus size={14} /></button>
       </div>
 
-      <label className="qb-slider">
-        <span>Line <b>{s.layout.lineHeight}</b></span>
-        <input type="range" min={30} max={90} value={s.layout.lineHeight} onChange={(e) => onSettings({ layout: { ...s.layout, lineHeight: +e.target.value } })} />
-      </label>
-      <label className="qb-slider">
-        <span>Letter <b>{s.letterSpacing}</b></span>
-        <input type="range" min={-3} max={8} step={0.5} value={s.letterSpacing} onChange={(e) => onSettings({ letterSpacing: +e.target.value })} />
-      </label>
+      <button type="button" className={`qb-btn qb-pill qb-more${more ? ' on' : ''}`} aria-expanded={more} aria-controls="qb-extra" onClick={() => setMore((m) => !m)}>
+        {more ? 'Less' : 'More'}<ChevronDown size={15} className={more ? 'qb-rot' : undefined} />
+      </button>
     </nav>
+    {more && (
+      <div id="qb-extra" className="qb-extra" role="group" aria-label="More handwriting controls">
+        <label className="qb-slider">
+          <span>Line <b>{s.layout.lineHeight}</b></span>
+          <input type="range" min={30} max={90} value={s.layout.lineHeight} onChange={(e) => onSettings({ layout: { ...s.layout, lineHeight: +e.target.value } })} />
+        </label>
+        <label className="qb-slider">
+          <span>Letter <b>{s.letterSpacing}</b></span>
+          <input type="range" min={-3} max={8} step={0.5} value={s.letterSpacing} onChange={(e) => onSettings({ letterSpacing: +e.target.value })} />
+        </label>
+        <label className="qb-slider">
+          <span>Word <b>{s.wordSpacing}</b></span>
+          <input type="range" min={-4} max={16} step={0.5} value={s.wordSpacing} onChange={(e) => onSettings({ wordSpacing: +e.target.value })} />
+        </label>
+        <label className="qb-slider">
+          <span>Tilt <b>{s.tilt}°</b></span>
+          <input type="range" min={-6} max={6} step={0.5} value={s.tilt} onChange={(e) => onSettings({ tilt: +e.target.value })} />
+        </label>
+        <label className="qb-slider">
+          <span>Top <b>{s.layout.marginTop}</b></span>
+          <input type="range" min={20} max={400} value={s.layout.marginTop} onChange={(e) => onSettings({ layout: { ...s.layout, marginTop: +e.target.value } })} />
+        </label>
+        <label className="qb-slider">
+          <span>Left <b>{s.layout.marginLeft}</b></span>
+          <input type="range" min={20} max={400} value={s.layout.marginLeft} onChange={(e) => onSettings({ layout: { ...s.layout, marginLeft: +e.target.value } })} />
+        </label>
+        <button type="button" className="qb-btn qb-pill" onClick={() => onSettings({ autoMistake: true, mistakeSeed: s.mistakeSeed + 1 })}>Shuffle mistakes</button>
+      </div>
+    )}
+    </div>
   );
 }

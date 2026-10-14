@@ -27,7 +27,7 @@ export function LayoutPanel({ settings: s, overrideCount, onSettings, onClearOve
 }) {
   const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   return (
-    <Section title="Default page layout" badge={<span className="am-badge">Global presets</span>}>
+    <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Global presets</span>}>
       <p className="am-help">Every page uses these values unless you customize it from the page toolbar.</p>
       <p className="am-label">Page size</p>
       <Segmented<PageSizeId>

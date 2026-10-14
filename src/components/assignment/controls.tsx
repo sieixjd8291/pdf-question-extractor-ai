@@ -1,14 +1,28 @@
-import { useId, type ReactNode } from 'react';
-import { Minus, Plus, RotateCcw } from 'lucide-react';
+import { useId, useState, type ReactNode } from 'react';
+import { ChevronDown, Minus, Plus, RotateCcw } from 'lucide-react';
 
-export function Section({ title, badge, children, tone }: { title: string; badge?: ReactNode; children: ReactNode; tone?: 'warm' }) {
+export function Section({ title, badge, children, tone, defaultOpen = true }: { title: string; badge?: ReactNode; children: ReactNode; tone?: 'warm'; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const bodyId = useId();
   return (
-    <section className={`am-section${tone ? ` am-section-${tone}` : ''}`}>
+    <section className={`am-section${tone ? ` am-section-${tone}` : ''}${open ? '' : ' collapsed'}`}>
       <header className="am-section-head">
         <h3>{title}</h3>
-        {badge}
+        <div className="am-section-tools">
+          {badge}
+          <button
+            type="button"
+            className="am-section-toggle"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <ChevronDown size={16} aria-hidden />
+          </button>
+        </div>
       </header>
-      {children}
+      {open && <div id={bodyId} className="am-section-body">{children}</div>}
     </section>
   );
 }
