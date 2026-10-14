@@ -1,0 +1,386 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleHelp, Expand, Layers, Loader2, Minimize, PenLine, Redo2, RotateCcw, Shuffle, Undo2, FileImage } from 'lucide-react';
+import './assignment.css';
+import { useToast } from '../Toast';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
+import { PAGE_SIZES, PAPER_TEMPLATES, inkColor, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
+import { clearMeasureCache, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
+import { tintDiagram } from '../../lib/handwriting/render';
+import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
+import { useAssignmentDoc } from './useAssignmentDoc';
+import { useHandwritingPages } from './useHandwritingPages';
+import { PaperPicker } from './PaperPicker';
+import { PageCanvas } from './PageCanvas';
+import { TextPanel } from './TextPanel';
+import { MistakePanel } from './MistakePanel';
+import { LayoutPanel } from './LayoutPanel';
+import { FontPanel } from './FontPanel';
+import { PenPanel } from './PenPanel';
+import { StylePanel } from './StylePanel';
+import { RealismPanel } from './RealismPanel';
+import { ExportPanel } from './ExportPanel';
+import { ExportMenu, HelpDialog, PageLayoutDialog, PaperDialog } from './dialogs';
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function loadDownscaled(file: File, maxEdge: number): Promise<{ src: string; img: HTMLImageElement }> {
+  const raw = await readAsDataUrl(file);
+  const img = new Image();
+  img.src = raw;
+  await img.decode();
+  const k = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+  if (k >= 1) return { src: raw, img };
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * k);
+  c.height = Math.round(img.naturalHeight * k);
+  c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+  const src = c.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.92);
+  const out = new Image();
+  out.src = src;
+  await out.decode();
+  return { src, img: out };
+}
+
+export function AssignmentMaker() {
+  const toast = useToast();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const diagramInputRef = useRef<HTMLInputElement>(null);
+  const diagramTarget = useRef(0);
+  const [engine, setEngine] = useState<HandwritingEngine | null>(null);
+  const [engineError, setEngineError] = useState<string | null>(null);
+  const { doc, update, updateSettings, undo, redo, reset, canUndo, canRedo } = useAssignmentDoc();
+  const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
+  const [customFonts, setCustomFonts] = useState<HandwritingFont[]>([]);
+  const [activePage, setActivePage] = useState(0);
+  const [selectedDiagram, setSelectedDiagram] = useState<string | null>(null);
+  const [layoutDialogPage, setLayoutDialogPage] = useState<number | null>(null);
+  const [paperDialog, setPaperDialog] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [tinted, setTinted] = useState<Record<string, string>>({});
+  const [previewScale] = useState(() => (window.matchMedia('(pointer: coarse)').matches ? 0.6 : 1));
+
+  const s = doc.settings;
+  const size = PAGE_SIZES[s.pageSize];
+  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale);
+  const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
+  const color = inkColor(s);
+
+  useEffect(() => {
+    loadHandwritingEngine().then(setEngine, (e) => setEngineError(e instanceof Error ? e.message : 'Engine failed to load'));
+  }, []);
+
+  useEffect(() => {
+    if (activePage > 0 && activePage >= pageCount) setActivePage(Math.max(0, pageCount - 1));
+  }, [activePage, pageCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const d of doc.diagrams) {
+      const key = `${d.id}|${color}`;
+      if (d.tint && !tinted[key]) {
+        tintDiagram(d.src, color).then((url) => {
+          if (!cancelled) setTinted((prev) => ({ ...prev, [key]: url }));
+        });
+      }
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.diagrams, color, tinted]);
+
+  const diagramsWithTint: Diagram[] = useMemo(
+    () => doc.diagrams.map((d) => ({ ...d, tintedSrc: tinted[`${d.id}|${color}`] ?? null })),
+    [doc.diagrams, tinted, color],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('textarea, input, [contenteditable="true"]')) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDiagram) {
+        e.preventDefault();
+        update((d) => ({ ...d, diagrams: d.diagrams.filter((x) => x.id !== selectedDiagram) }), false);
+        setSelectedDiagram(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo, update, selectedDiagram]);
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else rootRef.current?.requestFullscreen?.().catch(() => toast.error('Fullscreen is not available in this browser.'));
+  };
+
+  const pickPhoto = useCallback(async (file: File) => {
+    try {
+      const { img } = await loadDownscaled(file, 2600);
+      setPhoto(img);
+      updateSettings({ paper: { kind: 'photo' }, showGuides: true }, false);
+      setPaperDialog(false);
+      toast.info('Photo added. Use the alignment guides and layout sliders to match its lines.');
+    } catch {
+      toast.error('That image could not be opened.');
+    }
+  }, [updateSettings, toast]);
+
+  const pickTemplate = useCallback((id: number) => {
+    updateSettings({ paper: { kind: 'template', template: id } }, false);
+    setPaperDialog(false);
+  }, [updateSettings]);
+
+  const uploadFont = async (file: File) => {
+    try {
+      const family = await registerCustomFont(file);
+      clearMeasureCache(family);
+      setCustomFonts((prev) => [{ family, label: family.replace(/^Custom /, ''), category: 'print', sizeAdjust: 1, custom: true }, ...prev.filter((f) => f.family !== family)]);
+      updateSettings({ fontFamily: family }, false);
+      toast.success('Your handwriting font is ready.');
+    } catch {
+      toast.error('That font file could not be loaded. Use a .ttf or .otf file.');
+    }
+  };
+
+  const openDiagramPicker = (page: number) => {
+    diagramTarget.current = page;
+    diagramInputRef.current?.click();
+  };
+
+  const addDiagram = async (file: File) => {
+    try {
+      const { src, img } = await loadDownscaled(file, 1600);
+      const w = size.width * 0.42;
+      const h = w * (img.naturalHeight / img.naturalWidth);
+      const page = Math.min(diagramTarget.current, Math.max(0, pageCount - 1));
+      const L = layoutForPage(s, doc.overrides, page);
+      const diagram: Diagram = {
+        id: `dg-${Date.now().toString(36)}`,
+        page,
+        src,
+        tintedSrc: null,
+        tint: false,
+        x: (size.width - w) / 2,
+        y: Math.min(size.height - h - L.marginBottom, L.marginTop + L.lineHeight * 4),
+        w,
+        h,
+        opacity: 1,
+      };
+      update((d) => ({ ...d, diagrams: [...d.diagrams, diagram] }), false);
+      setSelectedDiagram(diagram.id);
+      setActivePage(page);
+    } catch {
+      toast.error('That image could not be added.');
+    }
+  };
+
+  const changeDiagram = (id: string, patch: Partial<Diagram>) =>
+    update((d) => ({ ...d, diagrams: d.diagrams.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+  const runExport = async (format: ExportFormat, scope: 'all' | 'active') => {
+    if (!pages.input) return;
+    const list = scope === 'active' ? [Math.min(activePage, pageCount - 1)] : Array.from({ length: pageCount }, (_, i) => i);
+    setExportBusy('Preparing…');
+    try {
+      await exportAssignment(pages.input, diagramsWithTint, format, list, (done, total) => setExportBusy(`Page ${done}/${total}`));
+      toast.success(format === 'pdf' ? 'PDF downloaded.' : 'Download ready.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
+  const setOverride = (page: number, layout: PageLayout | null) =>
+    update((d) => {
+      const overrides = { ...d.overrides };
+      if (layout) overrides[page] = layout;
+      else delete overrides[page];
+      return { ...d, overrides };
+    });
+
+  const paperName = s.paper?.kind === 'photo' ? 'Your photo' : PAPER_TEMPLATES.find((t) => s.paper?.kind === 'template' && t.id === s.paper.template)?.name;
+  const selectedPaper = s.paper?.kind === 'photo' ? 'photo' : s.paper?.template ?? null;
+
+  return (
+    <div className="am-root" ref={rootRef}>
+      <header className="am-toolbar">
+        <div className="am-brand">
+          <span className="am-brand-icon" aria-hidden="true"><PenLine size={18} /></span>
+          <div>
+            <h1>Assignment Maker</h1>
+            <p>Realistic text to handwriting</p>
+          </div>
+        </div>
+        <div className="am-toolbar-actions">
+          <div className="am-btn-group">
+            <button type="button" className="icon-button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
+            <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
+          </div>
+          <button type="button" className="btn secondary btn-sm" onClick={() => openDiagramPicker(activePage)} disabled={!s.paper}>
+            <Layers size={15} /><span className="hide-sm">Add diagram</span>
+          </button>
+          <ExportMenu disabled={!s.paper || !pages.input} busy={exportBusy} pageCount={pageCount} onExport={runExport} />
+          <button type="button" className="icon-button" onClick={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)} aria-label="Re-roll handwriting variation" title="Re-roll handwriting variation"><Shuffle size={16} /></button>
+          <button type="button" className="icon-button" onClick={() => setHelpOpen(true)} aria-label="Help" title="Help"><CircleHelp size={16} /></button>
+          <button type="button" className="icon-button hide-sm" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+            {fullscreen ? <Minimize size={16} /> : <Expand size={16} />}
+          </button>
+          <button type="button" className="icon-button" onClick={() => setConfirmReset(true)} aria-label="Reset document" title="Reset document"><RotateCcw size={16} /></button>
+        </div>
+      </header>
+
+      <div className="am-body">
+        <div className="am-stage">
+          {engineError ? (
+            <div className="am-state" role="alert">
+              <h2>The handwriting engine could not start</h2>
+              <p>{engineError}. Reload the page to try again.</p>
+            </div>
+          ) : !s.paper ? (
+            <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickPhoto={pickPhoto} />
+          ) : (
+            <div className="am-pages">
+              <div className="am-stage-bar">
+                <button type="button" className="am-paper-chip" onClick={() => setPaperDialog(true)}>
+                  <FileImage size={14} />{paperName ?? 'Paper'}<span>Change</span>
+                </button>
+                <span className="am-status" aria-live="polite">
+                  {pages.rendering || !engine ? <><Loader2 size={14} className="am-spin" />Writing…</> : `${pageCount} ${pageCount === 1 ? 'page' : 'pages'} · ${size.label}`}
+                </span>
+              </div>
+              {pages.error && <p className="am-error" role="alert">{pages.error}</p>}
+              {doc.text.trim() === '' && <p className="am-empty-hint">Start typing in the panel to see your handwriting appear.</p>}
+              {Array.from({ length: Math.max(1, pageCount) }, (_, i) => (
+                <PageCanvas
+                  key={i}
+                  canvas={pages.canvases[i]}
+                  index={i}
+                  pageCount={Math.max(1, pageCount)}
+                  pageW={size.width}
+                  pageH={size.height}
+                  diagrams={diagramsWithTint.filter((d) => d.page === i)}
+                  selectedDiagram={selectedDiagram}
+                  hasOverride={Boolean(doc.overrides[i])}
+                  active={i === activePage}
+                  onActivate={() => setActivePage(i)}
+                  onSelectDiagram={setSelectedDiagram}
+                  onChangeDiagram={changeDiagram}
+                  onDeleteDiagram={(id) => {
+                    update((d) => ({ ...d, diagrams: d.diagrams.filter((x) => x.id !== id) }), false);
+                    setSelectedDiagram(null);
+                  }}
+                  onAddDiagram={() => openDiagramPicker(i)}
+                  onCustomize={() => setLayoutDialogPage(i)}
+                  onDownload={() => {
+                    setActivePage(i);
+                    if (!pages.input) return;
+                    setExportBusy('Preparing…');
+                    exportAssignment(pages.input, diagramsWithTint, 'jpg', [i])
+                      .catch(() => toast.error('Export failed.'))
+                      .finally(() => setExportBusy(null));
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <aside className="am-sidebar" aria-label="Handwriting settings">
+          <TextPanel
+            text={doc.text}
+            pages={pageCount || 1}
+            settings={s}
+            onText={(t, coalesce = true) => update((d) => ({ ...d, text: t }), coalesce)}
+            onSettings={updateSettings}
+          />
+          <MistakePanel settings={s} onSettings={updateSettings} />
+          <FontPanel settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFont} />
+          <PenPanel settings={s} onSettings={updateSettings} />
+          <StylePanel settings={s} onSettings={updateSettings} />
+          <LayoutPanel
+            settings={s}
+            overrideCount={Object.keys(doc.overrides).length}
+            onSettings={updateSettings}
+            onClearOverrides={() => update((d) => ({ ...d, overrides: {} }), false)}
+          />
+          <RealismPanel settings={s} onSettings={updateSettings} />
+          <ExportPanel
+            settings={s}
+            onSettings={updateSettings}
+            pageCount={pageCount}
+            busy={exportBusy}
+            disabled={!s.paper || !pages.input}
+            onExport={runExport}
+          />
+        </aside>
+      </div>
+
+      <input
+        ref={diagramInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void addDiagram(f);
+        }}
+      />
+
+      {layoutDialogPage !== null && (
+        <PageLayoutDialog
+          page={layoutDialogPage}
+          layout={layoutForPage(s, doc.overrides, layoutDialogPage)}
+          isCustom={Boolean(doc.overrides[layoutDialogPage])}
+          onChange={(l) => setOverride(layoutDialogPage, l)}
+          onReset={() => setOverride(layoutDialogPage, null)}
+          onClose={() => setLayoutDialogPage(null)}
+        />
+      )}
+      {paperDialog && (
+        <PaperDialog onClose={() => setPaperDialog(false)}>
+          <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickPhoto={pickPhoto} compact />
+        </PaperDialog>
+      )}
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+      {confirmReset && (
+        <ConfirmDialog
+          title="Reset this document?"
+          message="Your text, diagrams, page customizations and style settings will be cleared. You can undo this."
+          confirmLabel="Reset"
+          danger
+          onConfirm={() => {
+            reset();
+            setSelectedDiagram(null);
+          }}
+          onClose={() => setConfirmReset(false)}
+        />
+      )}
+    </div>
+  );
+}

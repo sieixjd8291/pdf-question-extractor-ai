@@ -1,0 +1,22 @@
+@import "tailwindcss";
+@import "./ui.css";
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-hover: var(--hover);
+  --color-ink: var(--ink);
+  --color-secondary: var(--secondary);
+  --color-line: var(--line);
+  --color-strong-line: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-solid: var(--accent-solid);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-overlay: var(--overlay);
+}

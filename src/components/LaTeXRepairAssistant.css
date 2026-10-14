@@ -1,0 +1,36 @@
+.latex-repair { flex: 0 1 auto; min-height: 0; max-height: 48%; overflow: auto; padding: 0; border-top: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
+.latex-repair button:disabled { opacity: 0.45; cursor: not-allowed; }
+.latex-repair-head { position: sticky; top: 0; z-index: 1; background: var(--surface); display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.latex-repair-head > div { display: flex; align-items: center; gap: 8px; }
+.latex-repair-head svg, .latex-repair-scope svg { color: var(--accent); flex-shrink: 0; }
+.latex-repair-badge { font-size: 10px; color: var(--secondary); padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; white-space: nowrap; }
+.latex-repair-body { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.latex-repair p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.latex-repair-scope, .latex-repair-progress { display: flex; align-items: center; gap: 6px; color: var(--secondary); }
+.latex-repair-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.latex-repair-note { color: var(--secondary); font-size: 11px; }
+.latex-repair-alert { color: var(--danger); }
+.latex-repair-change { margin: 8px 0; border: 1px solid var(--line); border-radius: 6px; }
+.latex-repair-change summary { padding: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.latex-repair-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; border-top: 1px solid var(--line); background: var(--canvas); }
+.latex-repair-diff > div { min-width: 0; }
+.latex-repair-diff span { display: block; color: var(--secondary); font-size: 10px; margin-bottom: 4px; }
+.latex-repair-diff pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; margin: 0; max-height: 140px; overflow: auto; }
+@media (max-width: 900px) {
+  .latex-repair {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 50;
+    max-height: min(65dvh, 480px);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.35);
+    overscroll-behavior: contain;
+  }
+  .latex-repair-head { border-radius: 16px 16px 0 0; padding: 12px 14px; }
+  .latex-repair-body { padding-bottom: 16px; }
+  .latex-repair-actions > button { min-height: 40px; }
+}
+@media (max-width: 600px) { .latex-repair-diff { grid-template-columns: 1fr; } .latex-repair-badge { display: none; } }

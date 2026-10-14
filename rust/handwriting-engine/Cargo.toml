@@ -1,0 +1,17 @@
+[package]
+name = "handwriting-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Assignment Maker core: handwriting layout, mistake simulation, paper synthesis and ink texture (WebAssembly)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
