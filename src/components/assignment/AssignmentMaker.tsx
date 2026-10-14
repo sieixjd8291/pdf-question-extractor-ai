@@ -13,6 +13,7 @@ import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
 import { TextPanel } from './TextPanel';
+import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
 import { LayoutPanel } from './LayoutPanel';
 import { FontPanel } from './FontPanel';
@@ -279,6 +280,8 @@ export function AssignmentMaker() {
           <button type="button" className="icon-button" onClick={() => setConfirmReset(true)} aria-label="Reset document" title="Reset document"><RotateCcw size={16} /></button>
         </div>
       </header>
+
+      <QuickBar settings={s} onSettings={updateSettings} />
 
       <div className="am-body">
         <div className="am-stage">
