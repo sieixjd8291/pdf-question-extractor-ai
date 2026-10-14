@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, LayoutTemplate, Lightbulb, Sparkles } from 'lucide-react';
 import type { HandwritingEngine } from '../../lib/handwriting/engine';
-import { DEFAULT_LAYOUT, PAPER_TEMPLATES, PAGE_SIZES, type PageSizeId } from '../../lib/handwriting/catalog';
+import { DEFAULT_LAYOUT, PAPER_TEMPLATES, PAGE_SIZES, STOCK_PAPERS, type PageSizeId } from '../../lib/handwriting/catalog';
 
 const thumbCache = new Map<string, string>();
 
@@ -40,11 +40,12 @@ function useTemplateThumbs(engine: HandwritingEngine | null, pageSize: PageSizeI
   return thumbs;
 }
 
-export function PaperPicker({ engine, pageSize, selected, onPickTemplate, onPickPhoto, compact }: {
+export function PaperPicker({ engine, pageSize, selected, onPickTemplate, onPickStock, onPickPhoto, compact }: {
   engine: HandwritingEngine | null;
   pageSize: PageSizeId;
-  selected: number | 'photo' | null;
+  selected: number | string | null;
   onPickTemplate: (id: number) => void;
+  onPickStock: (id: string) => void;
   onPickPhoto: (file: File) => void;
   compact?: boolean;
 }) {
@@ -113,6 +114,27 @@ export function PaperPicker({ engine, pageSize, selected, onPickTemplate, onPick
         }}
       />
       <div className="am-templates-head" ref={templatesRef}>
+        <h3>Real paper photos</h3>
+        <span className="am-tip"><Lightbulb size={13} /><span>Lines are pre-aligned to the photo</span></span>
+      </div>
+      <div className="am-template-grid">
+        {STOCK_PAPERS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`am-template-card${selected === p.id ? ' active' : ''}`}
+            onClick={() => onPickStock(p.id)}
+            aria-pressed={selected === p.id}
+          >
+            <span className="am-template-thumb">
+              <img src={p.thumb} alt="" loading="lazy" />
+              <span className="am-template-badge">Photo</span>
+            </span>
+            <span className="am-template-meta"><strong>{p.name}</strong><small>{p.description}</small></span>
+          </button>
+        ))}
+      </div>
+      <div className="am-templates-head">
         <h3>Notebook page templates</h3>
         <span className="am-tip"><Lightbulb size={13} /><span><strong>Tip:</strong> use Classic White for the cleanest alignment</span></span>
       </div>

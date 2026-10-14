@@ -4,15 +4,16 @@ import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
-import { PAGE_SIZES, PAPER_TEMPLATES, inkColor, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
-import { clearMeasureCache, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
-import { tintDiagram } from '../../lib/handwriting/render';
+import { PAGE_SIZES, PAPER_TEMPLATES, findStockPaper, inkColor, stockLayout, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
+import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
+import { loadImage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
 import { TextPanel } from './TextPanel';
+import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
 import { LayoutPanel } from './LayoutPanel';
 import { FontPanel } from './FontPanel';
@@ -149,6 +150,27 @@ export function AssignmentMaker() {
     }
   }, [updateSettings, toast]);
 
+  const stockId = s.paper?.kind === 'stock' ? s.paper.id : null;
+  useEffect(() => {
+    const paper = stockId ? findStockPaper(stockId) : undefined;
+    if (!paper || photo?.src.endsWith(paper.src)) return;
+    let cancelled = false;
+    loadImage(paper.src).then(
+      (img) => !cancelled && setPhoto(img),
+      () => !cancelled && toast.error('That paper photo could not be loaded.'),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [stockId, photo, toast]);
+
+  const pickStock = useCallback((id: string) => {
+    const paper = findStockPaper(id);
+    if (!paper) return;
+    updateSettings({ paper: { kind: 'stock', id }, layout: stockLayout(paper, s.pageSize), fontSize: paper.fontSize, showGuides: false }, false);
+    setPaperDialog(false);
+  }, [updateSettings, s.pageSize]);
+
   const pickTemplate = useCallback((id: number) => {
     updateSettings({ paper: { kind: 'template', template: id } }, false);
     setPaperDialog(false);
@@ -223,8 +245,13 @@ export function AssignmentMaker() {
       return { ...d, overrides };
     });
 
-  const paperName = s.paper?.kind === 'photo' ? 'Your photo' : PAPER_TEMPLATES.find((t) => s.paper?.kind === 'template' && t.id === s.paper.template)?.name;
-  const selectedPaper = s.paper?.kind === 'photo' ? 'photo' : s.paper?.template ?? null;
+  const paperName = s.paper?.kind === 'photo'
+    ? 'Your photo'
+    : s.paper?.kind === 'stock'
+      ? findStockPaper(s.paper.id)?.name
+      : PAPER_TEMPLATES.find((t) => s.paper?.kind === 'template' && t.id === s.paper.template)?.name;
+  const selectedPaper = !s.paper ? null : s.paper.kind === 'photo' ? 'photo' : s.paper.kind === 'stock' ? s.paper.id : s.paper.template;
+  const mistakeCounts = useMemo(() => (pages.input ? countMistakes(pages.input.layout) : null), [pages.input]);
 
   return (
     <div className="am-root" ref={rootRef}>
@@ -254,6 +281,8 @@ export function AssignmentMaker() {
         </div>
       </header>
 
+      <QuickBar settings={s} onSettings={updateSettings} />
+
       <div className="am-body">
         <div className="am-stage">
           {engineError ? (
@@ -262,7 +291,7 @@ export function AssignmentMaker() {
               <p>{engineError}. Reload the page to try again.</p>
             </div>
           ) : !s.paper ? (
-            <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickPhoto={pickPhoto} />
+            <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickStock={pickStock} onPickPhoto={pickPhoto} />
           ) : (
             <div className="am-pages">
               <div className="am-stage-bar">
@@ -318,7 +347,7 @@ export function AssignmentMaker() {
             onText={(t, coalesce = true) => update((d) => ({ ...d, text: t }), coalesce)}
             onSettings={updateSettings}
           />
-          <MistakePanel settings={s} onSettings={updateSettings} />
+          <MistakePanel settings={s} counts={mistakeCounts} onSettings={updateSettings} />
           <FontPanel settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFont} />
           <PenPanel settings={s} onSettings={updateSettings} />
           <StylePanel settings={s} onSettings={updateSettings} />
@@ -364,7 +393,7 @@ export function AssignmentMaker() {
       )}
       {paperDialog && (
         <PaperDialog onClose={() => setPaperDialog(false)}>
-          <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickPhoto={pickPhoto} compact />
+          <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickStock={pickStock} onPickPhoto={pickPhoto} compact />
         </PaperDialog>
       )}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
