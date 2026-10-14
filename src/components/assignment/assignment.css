@@ -734,3 +734,16 @@
 }
 @keyframes qb-drop { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .qb-extra { animation: none; } }
+.am-section-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.am-section-toggle {
+  display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  color: var(--secondary); cursor: pointer; transition: background var(--t), color var(--t);
+}
+.am-section-toggle:hover { background: var(--canvas); color: var(--ink); }
+.am-section-toggle:focus-visible { outline: 2px solid var(--am-warm); outline-offset: 1px; }
+.am-section-toggle svg { transition: transform .18s ease; }
+.am-section.collapsed .am-section-toggle svg { transform: rotate(-90deg); }
+.am-section-body { display: flex; flex-direction: column; gap: inherit; animation: qb-drop .16s ease-out; }
+.am-section.collapsed { gap: 0; }
+@media (prefers-reduced-motion: reduce) { .am-section-body { animation: none; } }
