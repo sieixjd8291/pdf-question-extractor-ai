@@ -3,7 +3,7 @@ import { Section, SliderField, Toggle } from './controls';
 
 export function RealismPanel({ settings: s, onSettings }: { settings: AssignmentSettings; onSettings: (p: Partial<AssignmentSettings>) => void }) {
   return (
-    <Section title="Realism">
+    <Section title="Realism" defaultOpen={false}>
       <Toggle checked={s.photoFilter} onChange={(v) => onSettings({ photoFilter: v })} label="Realistic photo filter" description="Warm light, soft shadow and grain — like a phone photo" />
       {s.photoFilter && (
         <SliderField label="Filter strength" value={s.photoStrength} min={0.1} max={1} step={0.05} onChange={(v) => onSettings({ photoStrength: v })} format={(v) => `${Math.round(v * 100)}%`} defaultValue={0.6} />

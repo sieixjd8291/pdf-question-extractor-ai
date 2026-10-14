@@ -20,7 +20,7 @@ export function ExportPanel({ settings: s, onSettings, pageCount, busy, disabled
 }) {
   const megapixels = (scale: number) => ((1240 * scale * 1754 * scale) / 1_000_000).toFixed(1);
   return (
-    <Section title="Export" badge={busy ? <span className="am-badge am-badge-busy"><Loader2 size={12} className="am-spin" />{busy}</span> : undefined}>
+    <Section title="Export" defaultOpen={false} badge={busy ? <span className="am-badge am-badge-busy"><Loader2 size={12} className="am-spin" />{busy}</span> : undefined}>
       <div className="am-export-grid">
         {FORMATS.map(({ format, scope, label, hint, Icon }) => (
           <button

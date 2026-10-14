@@ -13,7 +13,7 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSettings; onSettings: (p: Partial<AssignmentSettings>) => void }) {
   return (
     <>
-      <Section title="Text style">
+      <Section title="Text style" defaultOpen={false}>
         <SliderField label="Font size" value={s.fontSize} min={14} max={96} onChange={(v) => onSettings({ fontSize: v })} defaultValue={D.fontSize} stepper />
         <SliderField label="Tilt / rotation" value={s.tilt} min={-12} max={12} step={0.5} onChange={(v) => onSettings({ tilt: v })} format={(v) => `${v.toFixed(1)}°`} defaultValue={0} />
         <SliderField label="Letter spacing" value={s.letterSpacing} min={-6} max={16} step={0.5} onChange={(v) => onSettings({ letterSpacing: v })} format={(v) => `${v}px`} defaultValue={0} />
@@ -32,7 +32,7 @@ export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSe
           ]}
         />
       </Section>
-      <Section title="Natural variation">
+      <Section title="Natural variation" defaultOpen={false}>
         <div className="am-chip-row">
           {NATURAL_PRESETS.map((p) => (
             <button key={p.id} type="button" className={`am-chip-btn${s.charVariance === p.patch.charVariance ? ' active' : ''}`} onClick={() => onSettings(p.patch)}>
