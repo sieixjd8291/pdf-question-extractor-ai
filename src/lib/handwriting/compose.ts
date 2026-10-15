@@ -16,21 +16,31 @@ let stylesheet: Promise<void> | null = null;
 export function ensureFontStylesheet(): Promise<void> {
   if (!stylesheet) {
     stylesheet = new Promise((resolve) => {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = FONT_CSS_HREF;
-      link.onload = () => resolve();
-      link.onerror = () => resolve();
-      document.head.appendChild(link);
+      const existing = document.getElementById('handwriting-fonts') as HTMLLinkElement | null;
+      if (existing?.sheet) return resolve();
+      const link = existing ?? document.createElement('link');
+      link.addEventListener('load', () => resolve(), { once: true });
+      link.addEventListener('error', () => resolve(), { once: true });
+      if (!existing) {
+        link.rel = 'stylesheet';
+        link.href = FONT_CSS_HREF;
+        document.head.appendChild(link);
+      }
     });
   }
   return stylesheet;
 }
 
+if (typeof document !== 'undefined') void ensureFontStylesheet();
+
 export async function loadFont(family: string, sample = 'Handwriting abc'): Promise<void> {
   await ensureFontStylesheet();
+  const spec = `100px "${family}"`;
   try {
-    await document.fonts.load(`100px "${family}"`, sample);
+    // Load both the text's glyph ranges and the basic Latin face; canvas only
+    // draws with faces that are fully loaded before the draw call.
+    await Promise.all([document.fonts.load(spec, sample), document.fonts.load(spec, 'abcABC')]);
+    await document.fonts.ready;
   } catch {
     // A missing face falls back to the next font; layout still measures it.
   }
