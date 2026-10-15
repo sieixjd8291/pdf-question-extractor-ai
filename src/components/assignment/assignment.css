@@ -110,7 +110,9 @@
 .am-empty-hint { width: 100%; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); color: var(--secondary); font-size: 13px; text-align: center; }
 
 /* ---------- Page canvas ---------- */
-.am-page { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.am-page { width: 100%; display: flex; flex-direction: column; gap: 8px; content-visibility: auto; contain-intrinsic-size: auto 1100px; }
+.am-sidebar { overscroll-behavior: contain; }
+.am-stage { overscroll-behavior: contain; }
 .am-page-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
 .am-page-num { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .am-page-num small { font-weight: 400; color: var(--secondary); margin-left: -4px; }

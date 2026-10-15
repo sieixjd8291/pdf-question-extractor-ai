@@ -44,7 +44,16 @@ export function PageCanvas(p: Props) {
     const k = p.pageW / rect.width;
     const start = { x: e.clientX, y: e.clientY, dx: d.x, dy: d.y, w: d.w, h: d.h };
     const ratio = d.h / d.w;
+    let frame_ = 0;
+    let last: PointerEvent | null = null;
     const move = (ev: PointerEvent) => {
+      last = ev;
+      if (!frame_) frame_ = requestAnimationFrame(apply);
+    };
+    const apply = () => {
+      frame_ = 0;
+      const ev = last;
+      if (!ev) return;
       const mx = (ev.clientX - start.x) * k;
       const my = (ev.clientY - start.y) * k;
       if (mode === 'move') {
@@ -58,6 +67,8 @@ export function PageCanvas(p: Props) {
       }
     };
     const up = () => {
+      if (frame_) cancelAnimationFrame(frame_);
+      apply();
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleHelp, Expand, Layers, Loader2, Minimize, PenLine, Redo2, RotateCcw, Shuffle, Undo2, FileImage } from 'lucide-react';
 import './assignment.css';
 import { useToast } from '../Toast';
@@ -22,6 +22,17 @@ import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
 import { ExportMenu, HelpDialog, PageLayoutDialog, PaperDialog } from './dialogs';
+
+// Panels only depend on settings + stable callbacks, so typing or page
+// rendering progress shouldn't re-render them.
+const QuickBarM = memo(QuickBar);
+const TextPanelM = memo(TextPanel);
+const MistakePanelM = memo(MistakePanel);
+const FontPanelM = memo(FontPanel);
+const PenPanelM = memo(PenPanel);
+const StylePanelM = memo(StylePanel);
+const LayoutPanelM = memo(LayoutPanel);
+const RealismPanelM = memo(RealismPanel);
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -188,6 +199,10 @@ export function AssignmentMaker() {
     }
   };
 
+  const uploadFontLatest = useRef(uploadFont);
+  uploadFontLatest.current = uploadFont;
+  const uploadFontRef = useCallback((file: File) => uploadFontLatest.current(file), []);
+
   const openDiagramPicker = (page: number) => {
     diagramTarget.current = page;
     diagramInputRef.current?.click();
@@ -222,6 +237,9 @@ export function AssignmentMaker() {
 
   const changeDiagram = (id: string, patch: Partial<Diagram>) =>
     update((d) => ({ ...d, diagrams: d.diagrams.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+  const onText = useCallback((t: string, coalesce = true) => update((d) => ({ ...d, text: t }), coalesce), [update]);
+  const clearOverrides = useCallback(() => update((d) => ({ ...d, overrides: {} }), false), [update]);
 
   const runExport = async (format: ExportFormat, scope: 'all' | 'active') => {
     if (!pages.input) return;
@@ -281,7 +299,7 @@ export function AssignmentMaker() {
         </div>
       </header>
 
-      <QuickBar settings={s} onSettings={updateSettings} />
+      <QuickBarM settings={s} onSettings={updateSettings} />
 
       <div className="am-body">
         <div className="am-stage">
@@ -340,24 +358,24 @@ export function AssignmentMaker() {
         </div>
 
         <aside className="am-sidebar" aria-label="Handwriting settings">
-          <TextPanel
+          <TextPanelM
             text={doc.text}
             pages={pageCount || 1}
             settings={s}
-            onText={(t, coalesce = true) => update((d) => ({ ...d, text: t }), coalesce)}
+            onText={onText}
             onSettings={updateSettings}
           />
-          <MistakePanel settings={s} counts={mistakeCounts} onSettings={updateSettings} />
-          <FontPanel settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFont} />
-          <PenPanel settings={s} onSettings={updateSettings} />
-          <StylePanel settings={s} onSettings={updateSettings} />
-          <LayoutPanel
+          <MistakePanelM settings={s} counts={mistakeCounts} onSettings={updateSettings} />
+          <FontPanelM settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFontRef} />
+          <PenPanelM settings={s} onSettings={updateSettings} />
+          <StylePanelM settings={s} onSettings={updateSettings} />
+          <LayoutPanelM
             settings={s}
             overrideCount={Object.keys(doc.overrides).length}
             onSettings={updateSettings}
-            onClearOverrides={() => update((d) => ({ ...d, overrides: {} }), false)}
+            onClearOverrides={clearOverrides}
           />
-          <RealismPanel settings={s} onSettings={updateSettings} />
+          <RealismPanelM settings={s} onSettings={updateSettings} />
           <ExportPanel
             settings={s}
             onSettings={updateSettings}
