@@ -7,6 +7,8 @@
  *    falls back to direct in-browser compilation.
  */
 
+import { isOnline } from './onlineStatus';
+
 export interface LaTeXCompileResult {
   pdf: Blob;
   engine: string;
@@ -125,6 +127,12 @@ export async function compileLaTeX(
   if (!tex.trim()) throw new LaTeXCompileError('Nothing to compile — the editor is empty.');
 
   const started = performance.now();
+
+  if (!isOnline()) {
+    throw new LaTeXCompileError(
+      "You're offline. Compiling to PDF needs an internet connection — your edits are saved on this device and you can compile once you reconnect."
+    );
+  }
 
   let serverMessage: string | undefined;
   try {

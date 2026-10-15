@@ -33,11 +33,13 @@ import {
   ShieldCheck,
   User,
   Sparkles,
+  WifiOff,
 } from 'lucide-react';
 import { useToast } from './Toast';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useDialog } from '../hooks/useDialog';
 import { compileLaTeX, LaTeXCompileError } from '../lib/latexCompiler';
+import { isOnline, useOnlineStatus } from '../lib/onlineStatus';
 import { newActivityId } from '../lib/activityTracker';
 import { recordAndSyncActivity } from '../lib/activityCloud';
 import { LaTeXPdfViewer } from './LaTeXPdfViewer';
@@ -356,7 +358,8 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
   const userDisplayName = user ? ('displayName' in user ? user.displayName : (user as any).user_metadata?.full_name) : null;
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'local' | 'loading'>(user ? 'synced' : 'local');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'local' | 'loading' | 'offline'>(user ? 'synced' : 'local');
+  const online = useOnlineStatus();
   const [lastSyncedTime, setLastSyncedTime] = useState<Date | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   // Fixed viewport position for the account popover, computed when it opens:
@@ -431,6 +434,11 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
 
     if (!userId) return;
     if (initialCloudFetched.current === userId) return;
+    // Offline: keep working from the local copy; this effect re-runs on reconnect.
+    if (!online) {
+      setCloudSyncStatus('offline');
+      return;
+    }
 
     let isSubscribed = true;
     const fetchUserWorkspace = async () => {
@@ -481,7 +489,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     return () => {
       isSubscribed = false;
     };
-  }, [user, userId, userEmail, toast]);
+  }, [user, userId, userEmail, toast, online]);
 
   // ---- Persistence (debounced local save + debounced cloud sync) -------------
   const wsRef = useRef(ws);
@@ -505,6 +513,11 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
       if (cloudRetryTimer.current) {
         window.clearTimeout(cloudRetryTimer.current);
         cloudRetryTimer.current = null;
+      }
+      // Changes are already saved locally; the reconnect effect pushes them later.
+      if (!isOnline()) {
+        setCloudSyncStatus('offline');
+        return false;
       }
       setCloudSyncStatus('syncing');
       try {
@@ -687,10 +700,21 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     };
   }, [user, persistDocumentAndWorkspaceToFirestore]);
 
+  useEffect(() => {
+    if (!online || !userId || initialCloudFetched.current !== userId) return;
+    cloudBackoffMs.current = 2000;
+    persistDocumentAndWorkspaceToFirestore(wsRef.current).catch(() => {});
+  }, [online, userId, persistDocumentAndWorkspaceToFirestore]);
+
   const handleManualCloudSync = async () => {
     if (!user) {
       setAuthModalMode('signin');
       setAuthModalOpen(true);
+      return;
+    }
+    if (!isOnline()) {
+      setCloudSyncStatus('offline');
+      toast.info("You're offline. Your projects are saved on this device and will sync when you reconnect.");
       return;
     }
     const ok = await persistDocumentAndWorkspaceToFirestore(ws);
@@ -858,7 +882,8 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
         setAssistantOpen(true);
         if (autoRepairRef.current) setRepairRunId(seq);
       }
-      if (!repairable) toast.error(latexErr && latexErr.via === 'none'
+      if (!isOnline()) toast.info("You're offline — compile again once you reconnect.");
+      else if (!repairable) toast.error(latexErr && latexErr.via === 'none'
         ? 'No LaTeX compiler available.'
         : 'Compilation is unavailable. Open Repair status for details.');
     } finally {
@@ -1678,6 +1703,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
                         {cloudSyncStatus === 'loading' && <><RotateCw size={12} className="spinner" /><span>Loading…</span></>}
                         {cloudSyncStatus === 'error' && <><AlertCircle size={12} /><span>Sync error</span></>}
                         {cloudSyncStatus === 'local' && <span>Local Storage</span>}
+                        {cloudSyncStatus === 'offline' && <><WifiOff size={12} /><span>Saved offline · syncs on reconnect</span></>}
                       </span>
                     </div>
                     {lastSyncedTime && (
@@ -2074,7 +2100,16 @@ onComplete={completeAssistantRepair}
             </div>
           </div>
           <div className="latex-preview-body">
-            {compileError && (
+            {compileError && !online && !repairing && (
+              <div className="latex-error">
+                <div className="latex-error-head">
+                  <WifiOff size={16} />
+                  <strong>Compiling is paused while offline</strong>
+                </div>
+                <p>Your edits are saved on this device. Press Compile again once you reconnect to render the PDF.</p>
+              </div>
+            )}
+            {compileError && (online || repairing) && (
               <div className="latex-error">
                 <div className="latex-error-head">
                   <AlertCircle size={16} />

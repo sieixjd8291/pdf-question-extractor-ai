@@ -1,5 +1,6 @@
 import {pdfjsLib,pdfAssetOptions} from './pdfConfig';
 import {geminiAuthHeaders} from './geminiSettings';
+import {isOnline} from './onlineStatus';
 import { BookChapter, BookMappingResult } from '../types';
 
 export interface BookScanProgress {
@@ -652,7 +653,7 @@ export async function analyzeBookPaginationStructure(
     : 'hybrid-text';
 
   // 4. AI fallback ONLY if explicitly requested by options (default is false for instant load)
-  if (options.useAiFallback === true) {
+  if (options.useAiFallback === true && isOnline()) {
     try {
       onProgress?.({
         phase: 'calculating-pagination',
@@ -780,7 +781,7 @@ export async function detectChapterTitleOnPage(
     const snippet = lineStrings.slice(0, 5).join(' | ');
 
     // 1. Primary: Use Gemini Flash Lite AI Vision & Structural Analysis on this specific opening page
-    try {
+    if (isOnline()) try {
       let imageData = '';
       if (typeof document !== 'undefined') {
         const viewport = page.getViewport({ scale: 0.9 });
