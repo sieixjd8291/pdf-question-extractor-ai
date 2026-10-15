@@ -156,6 +156,43 @@ export interface RenderOptions {
   diagrams?: LoadedDiagram[];
 }
 
+const hashView = new DataView(new ArrayBuffer(4));
+
+function mixFloat(h: number, v: number): number {
+  hashView.setFloat32(0, v);
+  return Math.imul(h ^ hashView.getUint32(0), 16777619) >>> 0;
+}
+
+function mixString(h: number, str: string): number {
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619) >>> 0;
+  return h;
+}
+
+/**
+ * Cheap fingerprint of everything that ends up on one page's pixels, so an
+ * unchanged page can keep its existing canvas instead of being redrawn.
+ * `base` must cover the settings, fonts, photo, scale and guides.
+ */
+export function pageSignature(input: RenderInput, page: number, base: string): string {
+  const { layout, units, overrides } = input;
+  const g = layout.glyphs;
+  let h = mixString(2166136261, base);
+  const ov = overrides[page];
+  if (ov) h = mixString(h, JSON.stringify(ov));
+  const idxs = layout.glyphsByPage[page] ?? [];
+  for (const idx of idxs) {
+    const o = idx * GLYPH_STRIDE;
+    h = mixString(h, units[g[o + 1]] ?? '');
+    for (let k = 2; k < GLYPH_STRIDE; k++) h = mixFloat(h, g[o + k]);
+  }
+  for (const st of layout.strokes) {
+    if (st.page !== page) continue;
+    h = mixFloat(h, st.kind);
+    for (let k = 0; k < st.points.length; k++) h = mixFloat(h, st.points[k]);
+  }
+  return `${idxs.length}:${h.toString(36)}`;
+}
+
 export function renderPage(input: RenderInput, page: number, opts: RenderOptions): HTMLCanvasElement {
   const { settings: s } = input;
   const scale = opts.scale;

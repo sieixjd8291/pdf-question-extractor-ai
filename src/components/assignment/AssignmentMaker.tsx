@@ -84,8 +84,30 @@ export function AssignmentMaker() {
 
   const s = doc.settings;
   const size = PAGE_SIZES[s.pageSize];
-  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale);
+  const pagesRef = useRef<HTMLDivElement>(null);
+  const visiblePages = useRef(new Set<number>([0]));
+  const getVisiblePages = useCallback(() => [...visiblePages.current].sort((a, b) => a - b), []);
+  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale, getVisiblePages);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
+
+  useEffect(() => {
+    const root = pagesRef.current;
+    if (!root) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const i = Array.prototype.indexOf.call(root.querySelectorAll('.am-page'), e.target);
+          if (i < 0) continue;
+          if (e.isIntersecting) visiblePages.current.add(i);
+          else visiblePages.current.delete(i);
+        }
+      },
+      { rootMargin: '400px 0px' },
+    );
+    visiblePages.current.clear();
+    root.querySelectorAll('.am-page').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [pageCount, s.paper]);
   const color = inkColor(s);
 
   useEffect(() => {
@@ -311,7 +333,7 @@ export function AssignmentMaker() {
           ) : !s.paper ? (
             <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickStock={pickStock} onPickPhoto={pickPhoto} />
           ) : (
-            <div className="am-pages">
+            <div className="am-pages" ref={pagesRef}>
               <div className="am-stage-bar">
                 <button type="button" className="am-paper-chip" onClick={() => setPaperDialog(true)}>
                   <FileImage size={14} />{paperName ?? 'Paper'}<span>Change</span>
