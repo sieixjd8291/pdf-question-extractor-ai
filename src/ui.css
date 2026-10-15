@@ -235,6 +235,8 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @keyframes barShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .animate-fadeIn { animation: fadeIn 0.22s ease; }
+/* Quiet first-load placeholder: reserves space so the layout doesn't jump. */
+.app-screen-loading { min-height: 60vh; }
 .thumb-skeleton {
   background: linear-gradient(100deg, var(--muted) 40%, var(--hover) 50%, var(--muted) 60%);
   background-size: 200% 100%;
@@ -408,9 +410,8 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
   flex-shrink: 0;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter: saturate(1.5) blur(12px);
-  -webkit-backdrop-filter: saturate(1.5) blur(12px);
+  /* Opaque instead of backdrop blur: a blurred sticky header re-composites on
+     every scroll frame, which costs GPU time and battery. */
   z-index: 30;
 }
 .header-inner {
@@ -872,11 +873,21 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
   display: block;
   height: 100%;
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--accent-deep, var(--accent)), var(--accent-solid), var(--accent-deep, var(--accent)));
-  background-size: 200% 100%;
-  animation: barShimmer 1.8s linear infinite;
+  position: relative;
+  overflow: hidden;
+  background: var(--accent-solid);
   transition: width 0.25s ease;
 }
+/* Shimmer via transform runs on the compositor instead of repainting the bar each frame. */
+.progress-track span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: translateX(-100%);
+  animation: barSweep 1.8s linear infinite;
+}
+@keyframes barSweep { to { transform: translateX(100%); } }
 .processing-summary, .processing-tip { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--secondary); margin-top: 22px; }
 .processing-tip { padding-top: 18px; border-top: 1px solid var(--line); }
 .spinner { animation: spin 1.4s linear infinite; }

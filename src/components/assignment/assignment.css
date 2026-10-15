@@ -43,8 +43,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 10px 20px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 .am-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }

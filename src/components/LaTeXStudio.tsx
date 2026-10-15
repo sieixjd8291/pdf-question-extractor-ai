@@ -610,14 +610,15 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     window.addEventListener('focus', handleVisibility);
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // 4. Polling heartbeat every 6 seconds as backup for mobile sleep/network changes
+    // 4. Backup heartbeat for missed realtime events; skipped while hidden/offline to save power
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
       fetchCloudManifestMeta(userId).then((meta) => {
         if (meta && meta.updatedMs > lastKnownCloudMs.current) {
           pullRemoteChanges(meta.updatedMs, true);
         }
       });
-    }, 6000);
+    }, 30000);
 
     return () => {
       isSubscribed = false;

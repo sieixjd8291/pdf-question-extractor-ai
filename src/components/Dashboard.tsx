@@ -291,13 +291,16 @@ export function Dashboard({ onOpenProject, onChangeAppMode }: {
     window.addEventListener('focus', handleVisibility);
     document.addEventListener('visibilitychange', handleVisibility);
 
+    // Backup heartbeat only: realtime + broadcast deliver changes instantly, and
+    // focus/visibility catch up after sleep. Skip while hidden/offline to save power.
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
       fetchCloudManifestMeta(userId).then((meta) => {
         if (meta && meta.updatedMs > lastKnownCloudMs.current) {
           pullRemote(meta.updatedMs);
         }
       });
-    }, 6000);
+    }, 30000);
 
     return () => {
       isSubscribed = false;
