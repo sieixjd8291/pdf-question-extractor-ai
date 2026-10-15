@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, useDeferredValue, lazy, Suspense } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, useDeferredValue, lazy, Suspense, startTransition } from 'react';
 import {
   FileText,
   Sparkles,
@@ -36,14 +36,49 @@ import type { BookScanProgress } from './lib/bookPaginationEngine';
 import { newActivityId } from './lib/activityTracker';
 import { recordAndSyncActivity } from './lib/activityCloud';
 
-const BoundingBoxEditor = lazy(() => import('./components/BoundingBoxEditor').then((m) => ({ default: m.BoundingBoxEditor })));
-const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
-const FullscreenModal = lazy(() => import('./components/FullscreenModal').then((m) => ({ default: m.FullscreenModal })));
-const BookChapterMapperView = lazy(() => import('./components/BookChapterMapperView').then((m) => ({ default: m.BookChapterMapperView })));
-const LaTeXStudio = lazy(() => import('./components/LaTeXStudio').then((m) => ({ default: m.LaTeXStudio })));
-const CamScanner = lazy(() => import('./components/CamScanner').then((m) => ({ default: m.CamScanner })));
-const AssignmentMaker = lazy(() => import('./components/assignment/AssignmentMaker').then((m) => ({ default: m.AssignmentMaker })));
-const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const screenLoaders = {
+  dashboard: () => import('./components/Dashboard'),
+  latex: () => import('./components/LaTeXStudio'),
+  assignment: () => import('./components/assignment/AssignmentMaker'),
+  scanner: () => import('./components/CamScanner'),
+  bookMapper: () => import('./components/BookChapterMapperView'),
+  settings: () => import('./components/SettingsModal'),
+  editor: () => import('./components/BoundingBoxEditor'),
+  fullscreen: () => import('./components/FullscreenModal'),
+};
+
+const BoundingBoxEditor = lazy(() => screenLoaders.editor().then((m) => ({ default: m.BoundingBoxEditor })));
+const SettingsModal = lazy(() => screenLoaders.settings().then((m) => ({ default: m.SettingsModal })));
+const FullscreenModal = lazy(() => screenLoaders.fullscreen().then((m) => ({ default: m.FullscreenModal })));
+const BookChapterMapperView = lazy(() => screenLoaders.bookMapper().then((m) => ({ default: m.BookChapterMapperView })));
+const LaTeXStudio = lazy(() => screenLoaders.latex().then((m) => ({ default: m.LaTeXStudio })));
+const CamScanner = lazy(() => screenLoaders.scanner().then((m) => ({ default: m.CamScanner })));
+const AssignmentMaker = lazy(() => screenLoaders.assignment().then((m) => ({ default: m.AssignmentMaker })));
+const Dashboard = lazy(() => screenLoaders.dashboard().then((m) => ({ default: m.Dashboard })));
+
+/**
+ * Warm the other tool screens one at a time while the browser is idle, so
+ * switching tools later is instant instead of flashing a loading state.
+ * Skipped on data-saver / slow connections to avoid wasting battery and data.
+ */
+function prefetchScreensWhenIdle(): () => void {
+  const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+  if (conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType ?? '')) return () => {};
+  const queue = Object.values(screenLoaders);
+  const idle: (cb: () => void) => number =
+    window.requestIdleCallback?.bind(window) ?? ((cb) => window.setTimeout(cb, 300));
+  const cancelIdle: (id: number) => void = window.cancelIdleCallback?.bind(window) ?? window.clearTimeout;
+  let handle = 0;
+  let stopped = false;
+  const next = () => {
+    if (stopped) return;
+    const load = queue.shift();
+    if (!load) return;
+    load().catch(() => {}).finally(() => { if (!stopped) handle = idle(next); });
+  };
+  const start = window.setTimeout(() => { handle = idle(next); }, 1500);
+  return () => { stopped = true; window.clearTimeout(start); cancelIdle(handle); };
+}
 
 /**
  * True when the app runs inside another app's embedded browser (Instagram /
@@ -71,7 +106,11 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isInAppBrowser] = useState<boolean>(() => detectInAppBrowser());
   // App Mode State: opens on the dashboard landing screen
-  const [appMode, setAppMode] = useState<AppMode>('dashboard');
+  const [appMode, setAppModeNow] = useState<AppMode>('dashboard');
+  // Switching tools as a transition keeps the current screen on display until
+  // the next one is ready, instead of blanking to a "Loading…" placeholder.
+  const setAppMode = useCallback((mode: AppMode) => startTransition(() => setAppModeNow(mode)), []);
+  useEffect(() => prefetchScreensWhenIdle(), []);
   // Project opened from the dashboard browser — LaTeX Studio lands on it.
   const [openedProjectId, setOpenedProjectId] = useState<string | null>(null);
 
@@ -706,7 +745,7 @@ export default function App() {
 
       {/* Main Container: Full-Bleed & Maximized */}
       <main className="app-main">
-        <Suspense fallback={<div className="notice app-notice" role="status" aria-live="polite">Loading…</div>}>
+        <Suspense fallback={<div className="app-screen-loading" role="status" aria-live="polite"><span className="sr-only">Loading…</span></div>}>
         {notice && <div className="notice app-notice" role="alert"><AlertCircle size={17}/><span>{notice}</span><button aria-label="Dismiss message" onClick={()=>setNotice(null)}>×</button></div>}
         {isInAppBrowser && <div className="notice app-notice webview-warning" role="status"><AlertCircle size={17}/><span>You've opened PDF Studio inside another app's browser. Sign-in, downloads and sharing often fail here — tap the ⋮ / … menu and choose “Open in Chrome” (or Safari) for the full experience.</span></div>}
         {fileName && !isProcessing && !hasResults && appMode !== 'latex-studio' && appMode !== 'cam-scanner' && appMode !== 'assignment-maker' && appMode !== 'dashboard' && <section className="empty-results"><FileText size={34}/><h2>{notice ? 'We couldn’t process this document' : 'No questions found'}</h2><p>{notice ? 'Try another PDF, or check that the file is not damaged or password-protected.' : 'The current detector needs selectable, numbered question text. Run OCR on image-only scans before uploading.'}</p><button className="btn primary" onClick={handleReset}>Choose another PDF</button></section>}

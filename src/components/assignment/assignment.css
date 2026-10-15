@@ -43,8 +43,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 10px 20px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 .am-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -110,7 +109,7 @@
 .am-empty-hint { width: 100%; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); color: var(--secondary); font-size: 13px; text-align: center; }
 
 /* ---------- Page canvas ---------- */
-.am-page { width: 100%; display: flex; flex-direction: column; gap: 8px; content-visibility: auto; contain-intrinsic-size: auto 1100px; }
+.am-page { width: 100%; display: flex; flex-direction: column; gap: 8px; }
 .am-sidebar { overscroll-behavior: contain; }
 .am-stage { overscroll-behavior: contain; }
 .am-page-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
