@@ -9,6 +9,7 @@ import {
   Monitor,
 } from 'lucide-react';
 import { AppMode } from '../types';
+import { OfflineIndicator } from './OfflineBanner';
 import { ThemePreference, THEME_EVENT, getStoredTheme, setThemePreference } from '../theme';
 
 interface HeaderProps {
@@ -66,6 +67,7 @@ export function Header(p: HeaderProps) {
           </button>
         </nav>
         <div className="header-actions">
+          <OfflineIndicator />
           <button
             className="icon-button"
             onClick={cycleTheme}

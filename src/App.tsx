@@ -11,6 +11,7 @@ import { UploadDropzone } from './components/UploadDropzone';
 import { ProcessingProgress } from './components/ProcessingProgress';
 import { QuestionCard } from './components/QuestionCard';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { OfflineBanner } from './components/OfflineBanner';
 import { useToast } from './components/Toast';
 import {
   AppMode,
@@ -746,6 +747,7 @@ export default function App() {
       {/* Main Container: Full-Bleed & Maximized */}
       <main className="app-main">
         <Suspense fallback={<div className="app-screen-loading" role="status" aria-live="polite"><span className="sr-only">Loading…</span></div>}>
+        <OfflineBanner appMode={appMode} />
         {notice && <div className="notice app-notice" role="alert"><AlertCircle size={17}/><span>{notice}</span><button aria-label="Dismiss message" onClick={()=>setNotice(null)}>×</button></div>}
         {isInAppBrowser && <div className="notice app-notice webview-warning" role="status"><AlertCircle size={17}/><span>You've opened PDF Studio inside another app's browser. Sign-in, downloads and sharing often fail here — tap the ⋮ / … menu and choose “Open in Chrome” (or Safari) for the full experience.</span></div>}
         {fileName && !isProcessing && !hasResults && appMode !== 'latex-studio' && appMode !== 'cam-scanner' && appMode !== 'assignment-maker' && appMode !== 'dashboard' && <section className="empty-results"><FileText size={34}/><h2>{notice ? 'We couldn’t process this document' : 'No questions found'}</h2><p>{notice ? 'Try another PDF, or check that the file is not damaged or password-protected.' : 'The current detector needs selectable, numbered question text. Run OCR on image-only scans before uploading.'}</p><button className="btn primary" onClick={handleReset}>Choose another PDF</button></section>}

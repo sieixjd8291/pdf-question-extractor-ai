@@ -2356,6 +2356,29 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
 .sync-badge.syncing { color: #f59e0b; }
 .sync-badge.error { color: #ef4444; }
 .sync-badge.local { color: var(--secondary); }
+.sync-badge.offline { color: var(--warning); }
+
+.offline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+.notice.offline-notice {
+  background: var(--warning-soft);
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+}
+.notice.offline-notice > svg { color: var(--warning); flex-shrink: 0; margin-top: 1px; }
+.notice.offline-notice button:hover { background: color-mix(in srgb, var(--warning) 14%, transparent); }
 
 .auth-modal-panel .btn.secondary {
   transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;

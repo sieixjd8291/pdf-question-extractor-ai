@@ -1,11 +1,47 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import {createHash} from 'crypto';
+import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+function listPublicFiles(dir: string, base = ''): string[] {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, {withFileTypes: true}).flatMap((entry) => {
+    const rel = `${base}/${entry.name}`;
+    return entry.isDirectory() ? listPublicFiles(path.join(dir, entry.name), rel) : [rel];
+  });
+}
+
+/** Emits /sw.js with every built chunk and public asset listed for precaching. */
+function offlineServiceWorker(): Plugin {
+  return {
+    name: 'pdf-studio-offline-sw',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const builtFiles = Object.keys(bundle)
+        .filter((file) => !file.endsWith('.map') && file !== 'index.html')
+        .map((file) => `/${file}`);
+      const publicFiles = listPublicFiles(path.resolve(__dirname, 'public')).filter(
+        (file) => !file.endsWith('.map') && file !== '/sw.js'
+      );
+      const urls = [...new Set([...builtFiles, ...publicFiles])].sort();
+      const version = createHash('sha256').update(urls.join('\n')).digest('hex').slice(0, 12);
+      const template = fs.readFileSync(path.resolve(__dirname, 'scripts/sw-template.js'), 'utf8');
+      this.emitFile({
+        type: 'asset',
+        fileName: 'sw.js',
+        source: template
+          .replace('__VERSION__', version)
+          .replace('__PRECACHE__', JSON.stringify(urls.map(encodeURI))),
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), offlineServiceWorker()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, 'src'),

@@ -3,6 +3,7 @@ import { RefreshCw, Sparkles, X } from 'lucide-react';
 import { isCompilerTimeout, latexRepairRequestError, latexRepairRequestSchema, type LatexAutoRepairResult, type LatexDiagnostic } from '../lib/latexRepair';
 import { runLatexRepairSession } from '../lib/latexRepairSession';
 import { geminiAuthHeaders, hasGeminiApiKey } from '../lib/geminiSettings';
+import { isOnline } from '../lib/onlineStatus';
 import './LaTeXRepairAssistant.css';
 
 export function LaTeXRepairAssistant({ fileName, source, files, signature, diagnostic, compiling, onComplete, onBusyChange, autoRunId, autoRepair, onAutoRunConsumed, onClose }: {
@@ -67,6 +68,9 @@ export function LaTeXRepairAssistant({ fileName, source, files, signature, diagn
         if (currentSignature.current !== requestSignature) {
           abort.abort();
           throw new Error('Your project changed during repair.');
+        }
+        if (!isOnline()) {
+          throw new Error("You're offline. AI repair needs an internet connection — try again once you reconnect.");
         }
         const response = await fetch('/api/latex-repair', {
           method: 'POST', headers, signal: abort.signal, body: JSON.stringify(batch),
