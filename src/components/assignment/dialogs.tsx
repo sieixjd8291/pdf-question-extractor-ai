@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Download, FileArchive, FileImage, FileText, X } from 'lucide-react';
 import { useDialog } from '../../hooks/useDialog';
-import type { PageLayout } from '../../lib/handwriting/catalog';
+import type { ActiveGuide, PageLayout } from '../../lib/handwriting/catalog';
 import type { ExportFormat } from '../../lib/handwriting/export';
 import { LayoutFields } from './LayoutPanel';
 
@@ -20,23 +20,69 @@ function Dialog({ title, onClose, children, wide }: { title: string; onClose: ()
   );
 }
 
-export function PageLayoutDialog({ page, layout, isCustom, onChange, onReset, onClose }: {
+/**
+ * Floating non-blurring layout inspector so the user can see the live page
+ * preview clearly while dragging per-page layout sliders.
+ */
+export function PageLayoutDialog({
+  page,
+  layout,
+  isCustom,
+  onChange,
+  onReset,
+  onClose,
+  onActiveGuide,
+}: {
   page: number;
   layout: PageLayout;
   isCustom: boolean;
   onChange: (l: PageLayout) => void;
   onReset: () => void;
   onClose: () => void;
+  onActiveGuide?: (guide: ActiveGuide) => void;
 }) {
+  const ref = useDialog(onClose);
   return (
-    <Dialog title={`Page ${page + 1} layout`} onClose={onClose}>
-      <p className="am-help">Changes apply only to page {page + 1}. Text after this page reflows automatically.</p>
-      <LayoutFields layout={layout} onChange={(patch) => onChange({ ...layout, ...patch })} />
-      <footer className="am-dialog-foot">
-        <button type="button" className="btn quiet" onClick={onReset} disabled={!isCustom}>Use global layout</button>
-        <button type="button" className="btn primary" onClick={onClose}>Done</button>
-      </footer>
-    </Dialog>
+    <div
+      className="am-floating-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={ref}
+        className="modal-panel sm am-dialog am-floating-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="am-dialog-title"
+        tabIndex={-1}
+      >
+        <header className="am-dialog-head">
+          <h2 id="am-dialog-title">Page {page + 1} layout</h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="am-dialog-body">
+          <p className="am-help">
+            Changes apply only to page {page + 1}. Drag any slider to see the live preview on the page.
+          </p>
+          <LayoutFields
+            layout={layout}
+            onChange={(patch) => onChange({ ...layout, ...patch })}
+            onActiveGuide={onActiveGuide}
+          />
+          <footer className="am-dialog-foot">
+            <button type="button" className="btn quiet" onClick={onReset} disabled={!isCustom}>
+              Use global layout
+            </button>
+            <button type="button" className="btn primary" onClick={onClose}>
+              Done
+            </button>
+          </footer>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -51,7 +97,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Math', 'Write LaTeX such as \\frac{a}{b}, \\sqrt{x}, x^2, H_2O, \\alpha or \\times — it is converted into handwritten maths.'],
     ['Pages', 'Long text splits into pages automatically. Insert \\newpage to force a break; customize any single page from its toolbar.'],
     ['Headings', 'Start a line with # to write it larger and underlined. Pasted ChatGPT formatting is cleaned automatically.'],
-    ['Realism', 'Auto mistakes add believable typos that are crossed out and rewritten. Re-roll gives every letter a fresh variation.'],
+    ['Realism', 'Auto mistakes add believable typos that are crossed out and rewritten. Page numbers can be placed in any corner or dragged to fit printed notebook boxes.'],
     ['Diagrams', 'Add Diagram places an image on the active page. Drag to move, use the corner to resize, and Ink to redraw it in pen colour.'],
     ['Shortcuts', 'Ctrl/⌘ + Z to undo, Ctrl/⌘ + Shift + Z or Ctrl + Y to redo (outside the text box).'],
   ];

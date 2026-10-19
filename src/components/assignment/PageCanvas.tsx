@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { Download, ImagePlus, SlidersHorizontal, Trash2, Droplet } from 'lucide-react';
-import type { Diagram } from '../../lib/handwriting/catalog';
+import type { ActiveGuide, Diagram } from '../../lib/handwriting/catalog';
+import type { PageNumberBox } from '../../lib/handwriting/render';
 
 interface Props {
   canvas: HTMLCanvasElement | undefined;
@@ -12,6 +13,11 @@ interface Props {
   selectedDiagram: string | null;
   hasOverride: boolean;
   active: boolean;
+  pageNumberBox?: PageNumberBox | null;
+  pageNumberOffsetX?: number;
+  pageNumberOffsetY?: number;
+  onMovePageNumber?: (offsetX: number, offsetY: number) => void;
+  onActiveGuide?: (guide: ActiveGuide) => void;
   onActivate: () => void;
   onSelectDiagram: (id: string | null) => void;
   onChangeDiagram: (id: string, patch: Partial<Diagram>) => void;
@@ -76,7 +82,49 @@ export function PageCanvas(p: Props) {
     window.addEventListener('pointerup', up);
   };
 
+  const startPageNumberDrag = (e: ReactPointerEvent) => {
+    if (!p.onMovePageNumber) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const k = p.pageW / rect.width;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const baseOx = p.pageNumberOffsetX ?? 0;
+    const baseOy = p.pageNumberOffsetY ?? 0;
+    p.onActiveGuide?.('pageNumber');
+
+    let rafId = 0;
+    let lastEv: PointerEvent | null = null;
+    const apply = () => {
+      rafId = 0;
+      if (!lastEv) return;
+      const dx = Math.round((lastEv.clientX - startX) * k);
+      const dy = Math.round((lastEv.clientY - startY) * k);
+      p.onMovePageNumber?.(
+        Math.min(600, Math.max(-600, baseOx + dx)),
+        Math.min(600, Math.max(-600, baseOy + dy)),
+      );
+    };
+    const move = (ev: PointerEvent) => {
+      lastEv = ev;
+      if (!rafId) rafId = requestAnimationFrame(apply);
+    };
+    const up = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      apply();
+      p.onActiveGuide?.(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
   const pct = (v: number, total: number) => `${(v / total) * 100}%`;
+  const pn = p.pageNumberBox;
 
   return (
     <article className={`am-page${p.active ? ' active' : ''}`} onPointerDown={p.onActivate} aria-label={`Page ${p.index + 1}`}>
@@ -109,6 +157,20 @@ export function PageCanvas(p: Props) {
         <div ref={hostRef} className="am-canvas-host">
           {!p.canvas && <div className="am-page-skeleton" aria-hidden="true" />}
         </div>
+        {pn && (
+          <div
+            className="am-pnum-hotspot"
+            style={{
+              left: pct(Math.max(0, pn.x - 10), p.pageW),
+              top: pct(Math.max(0, pn.y - pn.h * 0.85 - 6), p.pageH),
+              width: pct(pn.w + 20, p.pageW),
+              height: pct(pn.h * 1.1 + 12, p.pageH),
+            }}
+            title="Drag to move page number"
+            aria-label="Drag to reposition page number"
+            onPointerDown={startPageNumberDrag}
+          />
+        )}
         {p.diagrams.map((d) => {
           const selected = p.selectedDiagram === d.id;
           return (

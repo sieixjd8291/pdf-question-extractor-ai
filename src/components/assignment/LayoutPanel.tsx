@@ -1,4 +1,4 @@
-import { DEFAULT_LAYOUT, PAGE_SIZES, type AssignmentSettings, type PageLayout, type PageSizeId } from '../../lib/handwriting/catalog';
+import { DEFAULT_LAYOUT, PAGE_SIZES, type ActiveGuide, type AssignmentSettings, type PageLayout, type PageSizeId } from '../../lib/handwriting/catalog';
 import { Section, Segmented, SliderField, Toggle } from './controls';
 
 const LAYOUT_PRESETS: Array<{ id: string; label: string; layout: Partial<PageLayout>; fontSize: number }> = [
@@ -7,28 +7,94 @@ const LAYOUT_PRESETS: Array<{ id: string; label: string; layout: Partial<PageLay
   { id: 'narrow', label: 'Narrow', layout: { lineHeight: 42 }, fontSize: 31 },
 ];
 
-export function LayoutFields({ layout, onChange }: { layout: PageLayout; onChange: (patch: Partial<PageLayout>) => void }) {
+export function LayoutFields({
+  layout,
+  onChange,
+  onActiveGuide,
+}: {
+  layout: PageLayout;
+  onChange: (patch: Partial<PageLayout>) => void;
+  onActiveGuide?: (guide: ActiveGuide) => void;
+}) {
   return (
     <>
-      <SliderField label="Left margin" value={layout.marginLeft} min={0} max={420} onChange={(v) => onChange({ marginLeft: v })} format={(v) => `${v}px`} defaultValue={DEFAULT_LAYOUT.marginLeft} />
-      <SliderField label="Right margin" value={layout.marginRight} min={0} max={320} onChange={(v) => onChange({ marginRight: v })} format={(v) => `${v}px`} defaultValue={DEFAULT_LAYOUT.marginRight} />
-      <SliderField label="First line (top)" value={layout.marginTop} min={30} max={700} onChange={(v) => onChange({ marginTop: v })} format={(v) => `${v}px`} defaultValue={DEFAULT_LAYOUT.marginTop} />
-      <SliderField label="Bottom margin" value={layout.marginBottom} min={10} max={500} onChange={(v) => onChange({ marginBottom: v })} format={(v) => `${v}px`} defaultValue={DEFAULT_LAYOUT.marginBottom} />
-      <SliderField label="Line height" value={layout.lineHeight} min={24} max={130} step={0.5} onChange={(v) => onChange({ lineHeight: v })} format={(v) => `${v}px`} defaultValue={DEFAULT_LAYOUT.lineHeight} stepper />
+      <SliderField
+        label="Left margin"
+        value={layout.marginLeft}
+        min={0}
+        max={420}
+        onChange={(v) => onChange({ marginLeft: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'marginLeft' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={DEFAULT_LAYOUT.marginLeft}
+        stepper
+      />
+      <SliderField
+        label="Right margin"
+        value={layout.marginRight}
+        min={0}
+        max={320}
+        onChange={(v) => onChange({ marginRight: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'marginRight' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={DEFAULT_LAYOUT.marginRight}
+        stepper
+      />
+      <SliderField
+        label="First line (top)"
+        value={layout.marginTop}
+        min={30}
+        max={700}
+        onChange={(v) => onChange({ marginTop: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'marginTop' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={DEFAULT_LAYOUT.marginTop}
+        stepper
+      />
+      <SliderField
+        label="Bottom margin"
+        value={layout.marginBottom}
+        min={10}
+        max={500}
+        onChange={(v) => onChange({ marginBottom: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'marginBottom' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={DEFAULT_LAYOUT.marginBottom}
+        stepper
+      />
+      <SliderField
+        label="Line height"
+        value={layout.lineHeight}
+        min={24}
+        max={130}
+        step={0.5}
+        onChange={(v) => onChange({ lineHeight: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'lineHeight' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={DEFAULT_LAYOUT.lineHeight}
+        stepper
+      />
     </>
   );
 }
 
-export function LayoutPanel({ settings: s, overrideCount, onSettings, onClearOverrides }: {
+export function LayoutPanel({
+  settings: s,
+  overrideCount,
+  onSettings,
+  onClearOverrides,
+  onActiveGuide,
+}: {
   settings: AssignmentSettings;
   overrideCount: number;
   onSettings: (p: Partial<AssignmentSettings>) => void;
   onClearOverrides: () => void;
+  onActiveGuide?: (guide: ActiveGuide) => void;
 }) {
   const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   return (
-    <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Global presets</span>}>
-      <p className="am-help">Every page uses these values unless you customize it from the page toolbar.</p>
+    <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Live preview</span>}>
+      <p className="am-help">Drag any slider to preview margins and line spacing live on the page.</p>
       <p className="am-label">Page size</p>
       <Segmented<PageSizeId>
         label="Page size"
@@ -49,9 +115,24 @@ export function LayoutPanel({ settings: s, overrideCount, onSettings, onClearOve
           </button>
         ))}
       </div>
-      <LayoutFields layout={s.layout} onChange={setLayout} />
-      <SliderField label="Paragraph indent" value={s.paragraphIndent} min={0} max={200} onChange={(v) => onSettings({ paragraphIndent: v })} format={(v) => `${v}px`} defaultValue={0} />
-      <Toggle checked={s.showGuides} onChange={(v) => onSettings({ showGuides: v })} label="Show alignment guides" description="Overlay margins and baselines to calibrate photo paper" />
+      <LayoutFields layout={s.layout} onChange={setLayout} onActiveGuide={onActiveGuide} />
+      <SliderField
+        label="Paragraph indent"
+        value={s.paragraphIndent}
+        min={0}
+        max={200}
+        onChange={(v) => onSettings({ paragraphIndent: v })}
+        onDragChange={(d) => onActiveGuide?.(d ? 'paragraphIndent' : null)}
+        format={(v) => `${v}px`}
+        defaultValue={0}
+        stepper
+      />
+      <Toggle
+        checked={s.showGuides}
+        onChange={(v) => onSettings({ showGuides: v })}
+        label="Show alignment guides"
+        description="Overlay margins and baselines to calibrate photo paper"
+      />
       {overrideCount > 0 && (
         <button type="button" className="btn quiet btn-sm am-full" onClick={onClearOverrides}>
           Reset {overrideCount} customized {overrideCount === 1 ? 'page' : 'pages'} to global layout

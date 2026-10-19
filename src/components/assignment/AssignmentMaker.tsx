@@ -4,9 +4,9 @@ import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
-import { PAGE_SIZES, PAPER_TEMPLATES, findStockPaper, inkColor, stockLayout, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
+import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
-import { loadImage, tintDiagram } from '../../lib/handwriting/render';
+import { computePageNumberPlacement, formatPageNumber, loadImage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import { useHandwritingPages } from './useHandwritingPages';
@@ -74,6 +74,7 @@ export function AssignmentMaker() {
   const [activePage, setActivePage] = useState(0);
   const [selectedDiagram, setSelectedDiagram] = useState<string | null>(null);
   const [layoutDialogPage, setLayoutDialogPage] = useState<number | null>(null);
+  const [activeGuide, setActiveGuide] = useState<ActiveGuide>(null);
   const [paperDialog, setPaperDialog] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -87,8 +88,13 @@ export function AssignmentMaker() {
   const pagesRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>([0]));
   const getVisiblePages = useCallback(() => [...visiblePages.current].sort((a, b) => a - b), []);
-  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale, getVisiblePages);
+  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale, getVisiblePages, activeGuide);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
+
+  const movePageNumber = useCallback(
+    (offsetX: number, offsetY: number) => updateSettings({ pageNumberOffsetX: offsetX, pageNumberOffsetY: offsetY }),
+    [updateSettings],
+  );
 
   useEffect(() => {
     const root = pagesRef.current;
@@ -321,7 +327,7 @@ export function AssignmentMaker() {
         </div>
       </header>
 
-      <QuickBarM settings={s} onSettings={updateSettings} />
+      <QuickBarM settings={s} onSettings={updateSettings} onActiveGuide={setActiveGuide} />
 
       <div className="am-body">
         <div className="am-stage">
@@ -344,7 +350,16 @@ export function AssignmentMaker() {
               </div>
               {pages.error && <p className="am-error" role="alert">{pages.error}</p>}
               {doc.text.trim() === '' && <p className="am-empty-hint">Start typing in the panel to see your handwriting appear.</p>}
-              {Array.from({ length: Math.max(1, pageCount) }, (_, i) => (
+              {Array.from({ length: Math.max(1, pageCount) }, (_, i) => {
+                const fontA = findFont(s.fontFamily, customFonts);
+                const numScale = s.pageNumberScale || 0.82;
+                const fontPx = s.fontSize * numScale * fontA.sizeAdjust;
+                const label = s.pageNumbers ? formatPageNumber(s, i, Math.max(1, pageCount)) : '';
+                const estW = label ? Math.max(24, label.length * fontPx * 0.48) : 0;
+                const pageNumBox = s.pageNumbers
+                  ? computePageNumberPlacement(s, doc.overrides, i, estW, fontPx)
+                  : null;
+                return (
                 <PageCanvas
                   key={i}
                   canvas={pages.canvases[i]}
@@ -356,6 +371,11 @@ export function AssignmentMaker() {
                   selectedDiagram={selectedDiagram}
                   hasOverride={Boolean(doc.overrides[i])}
                   active={i === activePage}
+                  pageNumberBox={pageNumBox}
+                  pageNumberOffsetX={s.pageNumberOffsetX}
+                  pageNumberOffsetY={s.pageNumberOffsetY}
+                  onMovePageNumber={movePageNumber}
+                  onActiveGuide={setActiveGuide}
                   onActivate={() => setActivePage(i)}
                   onSelectDiagram={setSelectedDiagram}
                   onChangeDiagram={changeDiagram}
@@ -374,7 +394,8 @@ export function AssignmentMaker() {
                       .finally(() => setExportBusy(null));
                   }}
                 />
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -396,8 +417,9 @@ export function AssignmentMaker() {
             overrideCount={Object.keys(doc.overrides).length}
             onSettings={updateSettings}
             onClearOverrides={clearOverrides}
+            onActiveGuide={setActiveGuide}
           />
-          <RealismPanelM settings={s} onSettings={updateSettings} />
+          <RealismPanelM settings={s} onSettings={updateSettings} onActiveGuide={setActiveGuide} />
           <ExportPanel
             settings={s}
             onSettings={updateSettings}
@@ -428,7 +450,11 @@ export function AssignmentMaker() {
           isCustom={Boolean(doc.overrides[layoutDialogPage])}
           onChange={(l) => setOverride(layoutDialogPage, l)}
           onReset={() => setOverride(layoutDialogPage, null)}
-          onClose={() => setLayoutDialogPage(null)}
+          onClose={() => {
+            setActiveGuide(null);
+            setLayoutDialogPage(null);
+          }}
+          onActiveGuide={setActiveGuide}
         />
       )}
       {paperDialog && (
