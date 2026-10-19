@@ -10,7 +10,12 @@ function loadDraft(): AssignmentDoc {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return fresh;
-    const settings: AssignmentSettings = { ...DEFAULT_SETTINGS, ...saved.settings, layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout } };
+    const settings: AssignmentSettings = {
+      ...DEFAULT_SETTINGS,
+      ...saved.settings,
+      mistakeKinds: { ...DEFAULT_SETTINGS.mistakeKinds, ...saved.settings?.mistakeKinds, crossOut: false },
+      layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout },
+    };
     // Photos are not persisted, so a photo paper cannot be restored.
     if (settings.paper?.kind === 'photo') settings.paper = null;
     return {

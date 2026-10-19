@@ -309,7 +309,7 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   customInk: null,
   autoMistake: true,
   mistakeRate: 1,
-  mistakeKinds: { crossOut: true, caret: true, overwrite: true },
+  mistakeKinds: { crossOut: false, caret: true, overwrite: true },
   mistakeSeed: 0,
   crossStyle: 'mixed',
   latex: true,

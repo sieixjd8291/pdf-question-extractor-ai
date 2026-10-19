@@ -1,5 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, ChevronDown, Layers, Minus, Plus, Strikethrough, Type } from 'lucide-react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ChevronDown,
+  CircleHelp,
+  Expand,
+  Layers,
+  Minimize,
+  Minus,
+  PenLine,
+  Plus,
+  Redo2,
+  RotateCcw,
+  Shuffle,
+  Type,
+  Undo2,
+} from 'lucide-react';
 import {
   HANDWRITING_FONTS,
   INK_PRESETS,
@@ -7,19 +24,29 @@ import {
   inkColor,
   type ActiveGuide,
   type AssignmentSettings,
-  type CrossStyle,
   type TextAlign,
 } from '../../lib/handwriting/catalog';
 
 type Patch = (patch: Partial<AssignmentSettings>, undoable?: boolean) => void;
 
-const CROSS_STYLES: { id: CrossStyle; label: string }[] = [
-  { id: 'mixed', label: 'Mixed' },
-  { id: 'single', label: 'Single' },
-  { id: 'double', label: 'Double' },
-  { id: 'wavy', label: 'Wavy' },
-  { id: 'scribble', label: 'Scribble' },
-];
+export interface QuickBarProps {
+  settings: AssignmentSettings;
+  onSettings: Patch;
+  onActiveGuide?: (g: ActiveGuide) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onAddDiagram: () => void;
+  diagramDisabled: boolean;
+  exportMenu: ReactNode;
+  onShuffle: () => void;
+  onHelp: () => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+  onReset: () => void;
+}
+
 const RATES = [0, 1, 2, 3, 5];
 
 function Dropdown({ id, open, onToggle, trigger, label, children, split }: {
@@ -89,12 +116,27 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
   );
 }
 
-export function QuickBar({ settings: s, onSettings, onActiveGuide }: { settings: AssignmentSettings; onSettings: Patch; onActiveGuide?: (g: ActiveGuide) => void }) {
+export function QuickBar({
+  settings: s,
+  onSettings,
+  onActiveGuide,
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  onAddDiagram,
+  diagramDisabled,
+  exportMenu,
+  onShuffle,
+  onHelp,
+  fullscreen,
+  onToggleFullscreen,
+  onReset,
+}: QuickBarProps) {
   const [open, setOpen] = useState<string | null>(null);
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
   const rate = s.autoMistake ? s.mistakeRate : 0;
-  const [more, setMore] = useState(false);
   const setRate = (r: number) => onSettings(r <= 0 ? { autoMistake: false } : { autoMistake: true, mistakeRate: r });
   const aligns: { id: TextAlign; icon: ReactNode }[] = [
     { id: 'left', icon: <AlignLeft size={16} /> },
@@ -104,7 +146,17 @@ export function QuickBar({ settings: s, onSettings, onActiveGuide }: { settings:
 
   return (
     <div className="qb-wrap">
-    <nav className="qb" aria-label="Quick handwriting controls">
+    <nav className="qb" aria-label="Assignment Maker toolbar">
+      <div className="am-brand">
+        <span className="am-brand-icon" aria-hidden="true"><PenLine size={17} /></span>
+        <div className="am-brand-text">
+          <h1>Assignment Maker</h1>
+          <p className="hide-md">Realistic text to handwriting</p>
+        </div>
+      </div>
+
+      <div className="qb-divider" aria-hidden="true" />
+
       <button type="button" className={`qb-btn qb-pill${s.combineFonts ? ' on' : ''}`} aria-pressed={s.combineFonts} onClick={() => onSettings({ combineFonts: !s.combineFonts })}>
         <Layers size={15} />Combine
       </button>
@@ -156,25 +208,6 @@ export function QuickBar({ settings: s, onSettings, onActiveGuide }: { settings:
         </div>
       </Dropdown>
 
-      <Dropdown id="strike" label="Strike style" split open={open} onToggle={setOpen} trigger={
-        <button type="button" className={`qb-btn qb-pill${s.autoMistake && s.mistakeKinds.crossOut ? ' on' : ''}`}
-          aria-pressed={s.autoMistake && s.mistakeKinds.crossOut}
-          onClick={() => {
-            const on = s.autoMistake && s.mistakeKinds.crossOut;
-            if (on && !s.mistakeKinds.caret && !s.mistakeKinds.overwrite) onSettings({ autoMistake: false });
-            else onSettings({ autoMistake: true, mistakeKinds: { ...s.mistakeKinds, crossOut: !on } });
-          }}>
-          <Strikethrough size={15} />Strike
-        </button>
-      }>
-        <p className="qb-menu-label">Cross-out pen style</p>
-        {CROSS_STYLES.map((c) => (
-          <button key={c.id} type="button" role="menuitemradio" aria-checked={s.crossStyle === c.id}
-            className={`qb-item${s.crossStyle === c.id ? ' on' : ''}`}
-            onClick={() => { onSettings({ crossStyle: c.id }); setOpen(null); }}>{c.label}</button>
-        ))}
-      </Dropdown>
-
       <div className="qb-group qb-split qb-warm">
         <Dropdown id="mistake" label="Auto mistake" open={open} onToggle={setOpen} trigger={
           <button type="button" className="qb-btn qb-pill" onClick={() => setOpen(open === 'mistake' ? null : 'mistake')}>
@@ -195,66 +228,36 @@ export function QuickBar({ settings: s, onSettings, onActiveGuide }: { settings:
         <button type="button" className="qb-btn" aria-label="More mistakes" disabled={rate >= 10} onClick={() => setRate(rate + 1)}><Plus size={14} /></button>
       </div>
 
-      <button type="button" className={`qb-btn qb-pill qb-more${more ? ' on' : ''}`} aria-expanded={more} aria-controls="qb-extra" onClick={() => setMore((m) => !m)}>
-        {more ? 'Less' : 'More'}<ChevronDown size={15} className={more ? 'qb-rot' : undefined} />
+      <div className="qb-divider" aria-hidden="true" />
+
+      {/* Document & canvas tools (combined into 1 line) */}
+      <div className="am-btn-group">
+        <button type="button" className="icon-button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
+        <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
+      </div>
+
+      <button type="button" className="btn secondary btn-sm" onClick={onAddDiagram} disabled={diagramDisabled}>
+        <Layers size={15} /><span className="hide-sm">Add diagram</span>
+      </button>
+
+      {exportMenu}
+
+      <button type="button" className="icon-button" onClick={onShuffle} aria-label="Re-roll handwriting variation" title="Re-roll handwriting variation">
+        <Shuffle size={16} />
+      </button>
+
+      <button type="button" className="icon-button" onClick={onHelp} aria-label="Help" title="Help">
+        <CircleHelp size={16} />
+      </button>
+
+      <button type="button" className="icon-button hide-sm" onClick={onToggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+        {fullscreen ? <Minimize size={16} /> : <Expand size={16} />}
+      </button>
+
+      <button type="button" className="icon-button" onClick={onReset} aria-label="Reset document" title="Reset document">
+        <RotateCcw size={16} />
       </button>
     </nav>
-    {more && (
-      <div id="qb-extra" className="qb-extra" role="group" aria-label="More handwriting controls">
-        <label className="qb-slider">
-          <span>Line <b>{s.layout.lineHeight}</b></span>
-          <input
-            type="range"
-            min={30}
-            max={90}
-            value={s.layout.lineHeight}
-            onPointerDown={() => onActiveGuide?.('lineHeight')}
-            onPointerUp={() => onActiveGuide?.(null)}
-            onPointerCancel={() => onActiveGuide?.(null)}
-            onChange={(e) => onSettings({ layout: { ...s.layout, lineHeight: +e.target.value } })}
-          />
-        </label>
-        <label className="qb-slider">
-          <span>Letter <b>{s.letterSpacing}</b></span>
-          <input type="range" min={-3} max={8} step={0.5} value={s.letterSpacing} onChange={(e) => onSettings({ letterSpacing: +e.target.value })} />
-        </label>
-        <label className="qb-slider">
-          <span>Word <b>{s.wordSpacing}</b></span>
-          <input type="range" min={-4} max={16} step={0.5} value={s.wordSpacing} onChange={(e) => onSettings({ wordSpacing: +e.target.value })} />
-        </label>
-        <label className="qb-slider">
-          <span>Tilt <b>{s.tilt}°</b></span>
-          <input type="range" min={-6} max={6} step={0.5} value={s.tilt} onChange={(e) => onSettings({ tilt: +e.target.value })} />
-        </label>
-        <label className="qb-slider">
-          <span>Top <b>{s.layout.marginTop}</b></span>
-          <input
-            type="range"
-            min={20}
-            max={400}
-            value={s.layout.marginTop}
-            onPointerDown={() => onActiveGuide?.('marginTop')}
-            onPointerUp={() => onActiveGuide?.(null)}
-            onPointerCancel={() => onActiveGuide?.(null)}
-            onChange={(e) => onSettings({ layout: { ...s.layout, marginTop: +e.target.value } })}
-          />
-        </label>
-        <label className="qb-slider">
-          <span>Left <b>{s.layout.marginLeft}</b></span>
-          <input
-            type="range"
-            min={20}
-            max={400}
-            value={s.layout.marginLeft}
-            onPointerDown={() => onActiveGuide?.('marginLeft')}
-            onPointerUp={() => onActiveGuide?.(null)}
-            onPointerCancel={() => onActiveGuide?.(null)}
-            onChange={(e) => onSettings({ layout: { ...s.layout, marginLeft: +e.target.value } })}
-          />
-        </label>
-        <button type="button" className="qb-btn qb-pill" onClick={() => onSettings({ autoMistake: true, mistakeSeed: s.mistakeSeed + 1 })}>Shuffle mistakes</button>
-      </div>
-    )}
     </div>
   );
 }

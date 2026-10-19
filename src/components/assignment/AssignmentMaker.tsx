@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleHelp, Expand, Layers, Loader2, Minimize, PenLine, Redo2, RotateCcw, Shuffle, Undo2, FileImage } from 'lucide-react';
+import { FileImage, Loader2 } from 'lucide-react';
 import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -301,33 +301,30 @@ export function AssignmentMaker() {
 
   return (
     <div className="am-root" ref={rootRef}>
-      <header className="am-toolbar">
-        <div className="am-brand">
-          <span className="am-brand-icon" aria-hidden="true"><PenLine size={18} /></span>
-          <div>
-            <h1>Assignment Maker</h1>
-            <p>Realistic text to handwriting</p>
-          </div>
-        </div>
-        <div className="am-toolbar-actions">
-          <div className="am-btn-group">
-            <button type="button" className="icon-button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
-            <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
-          </div>
-          <button type="button" className="btn secondary btn-sm" onClick={() => openDiagramPicker(activePage)} disabled={!s.paper}>
-            <Layers size={15} /><span className="hide-sm">Add diagram</span>
-          </button>
-          <ExportMenu disabled={!s.paper || !pages.input} busy={exportBusy} pageCount={pageCount} onExport={runExport} />
-          <button type="button" className="icon-button" onClick={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)} aria-label="Re-roll handwriting variation" title="Re-roll handwriting variation"><Shuffle size={16} /></button>
-          <button type="button" className="icon-button" onClick={() => setHelpOpen(true)} aria-label="Help" title="Help"><CircleHelp size={16} /></button>
-          <button type="button" className="icon-button hide-sm" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
-            {fullscreen ? <Minimize size={16} /> : <Expand size={16} />}
-          </button>
-          <button type="button" className="icon-button" onClick={() => setConfirmReset(true)} aria-label="Reset document" title="Reset document"><RotateCcw size={16} /></button>
-        </div>
-      </header>
-
-      <QuickBarM settings={s} onSettings={updateSettings} onActiveGuide={setActiveGuide} />
+      <QuickBarM
+        settings={s}
+        onSettings={updateSettings}
+        onActiveGuide={setActiveGuide}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undo={undo}
+        redo={redo}
+        onAddDiagram={() => openDiagramPicker(activePage)}
+        diagramDisabled={!s.paper}
+        exportMenu={
+          <ExportMenu
+            disabled={!s.paper || !pages.input}
+            busy={exportBusy}
+            pageCount={pageCount}
+            onExport={runExport}
+          />
+        }
+        onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
+        onHelp={() => setHelpOpen(true)}
+        fullscreen={fullscreen}
+        onToggleFullscreen={toggleFullscreen}
+        onReset={() => setConfirmReset(true)}
+      />
 
       <div className="am-body">
         <div className="am-stage">

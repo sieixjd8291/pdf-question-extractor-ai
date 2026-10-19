@@ -5,7 +5,7 @@ import { handleAutoOrientRoute } from "../server/handwrittenOrientationService.j
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 12 * 1024 * 1024 },
-}).single("image") as RequestHandler;
+}).single("image") as unknown as RequestHandler;
 
 export const config = { api: { bodyParser: false } };
 

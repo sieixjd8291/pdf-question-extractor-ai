@@ -77,7 +77,7 @@ app.post("/api/analyze-page", aiRoute((req) =>
 app.post("/api/detect-orientation", aiRoute((req) =>
   detectOrientationHandler(req.body, keyFromRequest(req))));
 
-app.post("/api/local-orient", upload.single("image"), handleAutoOrientRoute);
+app.post("/api/local-orient", upload.single("image") as any, handleAutoOrientRoute);
 
 app.post("/api/validate-crop", aiRoute((req) =>
   validateCropHandler(req.body, keyFromRequest(req))));
