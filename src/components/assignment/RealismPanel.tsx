@@ -22,7 +22,7 @@ const FORMATS: Array<{ id: PageNumberFormat; label: string; sample: string }> = 
   { id: 'slash', label: '1 / Total', sample: '1 / 3' },
   { id: 'dash', label: 'Dashed', sample: '- 1 -' },
   { id: 'pg', label: 'Pg. 1', sample: 'Pg. 1' },
-  { id: 'circled', label: 'Circled', sample: '①' },
+  { id: 'circled', label: 'Circled', sample: '( 1 )' },
 ];
 
 export function RealismPanel({
