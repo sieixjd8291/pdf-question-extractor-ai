@@ -138,6 +138,7 @@ async function startServer() {
     const vite = await createServer({
       server: {
         middlewareMode: true,
+        allowedHosts: true,
         // Share the proxied HTTP port instead of opening an unreachable HMR port.
         hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
       },

@@ -36,16 +36,27 @@ import { autoFixImageOrientation } from './lib/orientationDetector';
 import type { BookScanProgress } from './lib/bookPaginationEngine';
 import { newActivityId } from './lib/activityTracker';
 import { recordAndSyncActivity } from './lib/activityCloud';
+import { AssignmentMaker } from './components/assignment/AssignmentMaker';
+import { Dashboard } from './components/Dashboard';
+
+function retryImport<T>(fn: () => Promise<T>, retries = 3, delayMs = 400): Promise<T> {
+  return fn().catch((err) => {
+    if (retries <= 0) throw err;
+    return new Promise<T>((resolve) => setTimeout(resolve, delayMs)).then(() =>
+      retryImport(fn, retries - 1, delayMs * 2),
+    );
+  });
+}
 
 const screenLoaders = {
-  dashboard: () => import('./components/Dashboard'),
-  latex: () => import('./components/LaTeXStudio'),
-  assignment: () => import('./components/assignment/AssignmentMaker'),
-  scanner: () => import('./components/CamScanner'),
-  bookMapper: () => import('./components/BookChapterMapperView'),
-  settings: () => import('./components/SettingsModal'),
-  editor: () => import('./components/BoundingBoxEditor'),
-  fullscreen: () => import('./components/FullscreenModal'),
+  dashboard: () => Promise.resolve({ Dashboard }),
+  latex: () => retryImport(() => import('./components/LaTeXStudio')),
+  assignment: () => Promise.resolve({ AssignmentMaker }),
+  scanner: () => retryImport(() => import('./components/CamScanner')),
+  bookMapper: () => retryImport(() => import('./components/BookChapterMapperView')),
+  settings: () => retryImport(() => import('./components/SettingsModal')),
+  editor: () => retryImport(() => import('./components/BoundingBoxEditor')),
+  fullscreen: () => retryImport(() => import('./components/FullscreenModal')),
 };
 
 const BoundingBoxEditor = lazy(() => screenLoaders.editor().then((m) => ({ default: m.BoundingBoxEditor })));
@@ -54,8 +65,6 @@ const FullscreenModal = lazy(() => screenLoaders.fullscreen().then((m) => ({ def
 const BookChapterMapperView = lazy(() => screenLoaders.bookMapper().then((m) => ({ default: m.BookChapterMapperView })));
 const LaTeXStudio = lazy(() => screenLoaders.latex().then((m) => ({ default: m.LaTeXStudio })));
 const CamScanner = lazy(() => screenLoaders.scanner().then((m) => ({ default: m.CamScanner })));
-const AssignmentMaker = lazy(() => screenLoaders.assignment().then((m) => ({ default: m.AssignmentMaker })));
-const Dashboard = lazy(() => screenLoaders.dashboard().then((m) => ({ default: m.Dashboard })));
 
 /**
  * Warm the other tool screens one at a time while the browser is idle, so
