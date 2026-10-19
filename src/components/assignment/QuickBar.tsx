@@ -5,6 +5,7 @@ import {
   INK_PRESETS,
   PENS,
   inkColor,
+  type ActiveGuide,
   type AssignmentSettings,
   type CrossStyle,
   type TextAlign,
@@ -88,7 +89,7 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
   );
 }
 
-export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSettings; onSettings: Patch }) {
+export function QuickBar({ settings: s, onSettings, onActiveGuide }: { settings: AssignmentSettings; onSettings: Patch; onActiveGuide?: (g: ActiveGuide) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
@@ -202,7 +203,16 @@ export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSett
       <div id="qb-extra" className="qb-extra" role="group" aria-label="More handwriting controls">
         <label className="qb-slider">
           <span>Line <b>{s.layout.lineHeight}</b></span>
-          <input type="range" min={30} max={90} value={s.layout.lineHeight} onChange={(e) => onSettings({ layout: { ...s.layout, lineHeight: +e.target.value } })} />
+          <input
+            type="range"
+            min={30}
+            max={90}
+            value={s.layout.lineHeight}
+            onPointerDown={() => onActiveGuide?.('lineHeight')}
+            onPointerUp={() => onActiveGuide?.(null)}
+            onPointerCancel={() => onActiveGuide?.(null)}
+            onChange={(e) => onSettings({ layout: { ...s.layout, lineHeight: +e.target.value } })}
+          />
         </label>
         <label className="qb-slider">
           <span>Letter <b>{s.letterSpacing}</b></span>
@@ -218,11 +228,29 @@ export function QuickBar({ settings: s, onSettings }: { settings: AssignmentSett
         </label>
         <label className="qb-slider">
           <span>Top <b>{s.layout.marginTop}</b></span>
-          <input type="range" min={20} max={400} value={s.layout.marginTop} onChange={(e) => onSettings({ layout: { ...s.layout, marginTop: +e.target.value } })} />
+          <input
+            type="range"
+            min={20}
+            max={400}
+            value={s.layout.marginTop}
+            onPointerDown={() => onActiveGuide?.('marginTop')}
+            onPointerUp={() => onActiveGuide?.(null)}
+            onPointerCancel={() => onActiveGuide?.(null)}
+            onChange={(e) => onSettings({ layout: { ...s.layout, marginTop: +e.target.value } })}
+          />
         </label>
         <label className="qb-slider">
           <span>Left <b>{s.layout.marginLeft}</b></span>
-          <input type="range" min={20} max={400} value={s.layout.marginLeft} onChange={(e) => onSettings({ layout: { ...s.layout, marginLeft: +e.target.value } })} />
+          <input
+            type="range"
+            min={20}
+            max={400}
+            value={s.layout.marginLeft}
+            onPointerDown={() => onActiveGuide?.('marginLeft')}
+            onPointerUp={() => onActiveGuide?.(null)}
+            onPointerCancel={() => onActiveGuide?.(null)}
+            onChange={(e) => onSettings({ layout: { ...s.layout, marginLeft: +e.target.value } })}
+          />
         </label>
         <button type="button" className="qb-btn qb-pill" onClick={() => onSettings({ autoMistake: true, mistakeSeed: s.mistakeSeed + 1 })}>Shuffle mistakes</button>
       </div>

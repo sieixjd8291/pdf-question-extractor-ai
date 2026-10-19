@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Minus, Plus, RotateCcw } from 'lucide-react';
 
 export function Section({ title, badge, children, tone, defaultOpen = true }: { title: string; badge?: ReactNode; children: ReactNode; tone?: 'warm'; defaultOpen?: boolean }) {
@@ -59,26 +59,81 @@ interface SliderProps {
   format?: (v: number) => string;
   defaultValue?: number;
   stepper?: boolean;
+  onDragChange?: (dragging: boolean) => void;
 }
 
-export function SliderField({ label, value, min, max, step = 1, onChange, format, defaultValue, stepper }: SliderProps) {
+export function SliderField({ label, value, min, max, step = 1, onChange, format, defaultValue, stepper, onDragChange }: SliderProps) {
   const id = useId();
+  const pulseTimer = useRef(0);
+  const draggingRef = useRef(false);
+  const onDragRef = useRef(onDragChange);
+  onDragRef.current = onDragChange;
+
+  const setDragging = (next: boolean) => {
+    window.clearTimeout(pulseTimer.current);
+    if (draggingRef.current === next) return;
+    draggingRef.current = next;
+    onDragRef.current?.(next);
+  };
+
+  const pulseDrag = () => {
+    if (!onDragRef.current) return;
+    window.clearTimeout(pulseTimer.current);
+    if (!draggingRef.current) {
+      draggingRef.current = true;
+      onDragRef.current(true);
+    }
+    pulseTimer.current = window.setTimeout(() => {
+      draggingRef.current = false;
+      onDragRef.current?.(false);
+    }, 550);
+  };
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(pulseTimer.current);
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        onDragRef.current?.(false);
+      }
+    };
+  }, []);
+
   const clamp = (v: number) => Math.min(max, Math.max(min, Math.round(v / step) * step));
   const display = format ? format(value) : String(Math.round(value * 100) / 100);
+  const pct = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+
   return (
     <div className="am-slider">
       <div className="am-slider-head">
         <label htmlFor={id}>{label}</label>
         <span className="am-slider-value">{display}</span>
         {defaultValue !== undefined && Math.abs(value - defaultValue) > step / 2 && (
-          <button type="button" className="am-mini-btn" onClick={() => onChange(defaultValue)} aria-label={`Reset ${label}`} title={`Reset ${label}`}>
+          <button
+            type="button"
+            className="am-mini-btn"
+            onClick={() => {
+              pulseDrag();
+              onChange(defaultValue);
+            }}
+            aria-label={`Reset ${label}`}
+            title={`Reset ${label}`}
+          >
             <RotateCcw size={12} />
           </button>
         )}
       </div>
       <div className="am-slider-row">
         {stepper && (
-          <button type="button" className="am-step-btn" onClick={() => onChange(clamp(value - step))} aria-label={`Decrease ${label}`}>
+          <button
+            type="button"
+            className="am-step-btn"
+            onClick={() => {
+              pulseDrag();
+              onChange(clamp(value - step));
+            }}
+            aria-label={`Decrease ${label}`}
+          >
             <Minus size={14} />
           </button>
         )}
@@ -89,11 +144,29 @@ export function SliderField({ label, value, min, max, step = 1, onChange, format
           max={max}
           step={step}
           value={value}
+          onPointerDown={() => {
+            setDragging(true);
+            const end = () => {
+              window.removeEventListener('pointerup', end);
+              window.removeEventListener('pointercancel', end);
+              setDragging(false);
+            };
+            window.addEventListener('pointerup', end);
+            window.addEventListener('pointercancel', end);
+          }}
           onChange={(e) => onChange(Number(e.target.value))}
-          style={{ ['--fill' as string]: `${((value - min) / (max - min)) * 100}%` }}
+          style={{ ['--fill' as string]: `${pct}%` }}
         />
         {stepper && (
-          <button type="button" className="am-step-btn" onClick={() => onChange(clamp(value + step))} aria-label={`Increase ${label}`}>
+          <button
+            type="button"
+            className="am-step-btn"
+            onClick={() => {
+              pulseDrag();
+              onChange(clamp(value + step));
+            }}
+            aria-label={`Increase ${label}`}
+          >
             <Plus size={14} />
           </button>
         )}

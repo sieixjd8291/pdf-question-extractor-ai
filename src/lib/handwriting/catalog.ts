@@ -141,6 +141,27 @@ export function mistakeMask(k: MistakeKinds): number {
 export type TextAlign = 'left' | 'center' | 'right' | 'justify';
 export const ALIGN_ID: Record<TextAlign, number> = { left: 0, center: 1, right: 2, justify: 3 };
 
+export type PageNumberPosition =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
+
+export type PageNumberFormat = 'page' | 'number' | 'slash' | 'dash' | 'pg' | 'circled';
+
+export type ActiveGuide =
+  | 'marginLeft'
+  | 'marginRight'
+  | 'marginTop'
+  | 'marginBottom'
+  | 'lineHeight'
+  | 'paragraphIndent'
+  | 'pageNumber'
+  | 'photoStrength'
+  | null;
+
 export interface PageLayout {
   marginLeft: number;
   marginRight: number;
@@ -239,6 +260,12 @@ export interface AssignmentSettings {
   underlineHeadings: boolean;
   headingScale: number;
   pageNumbers: boolean;
+  pageNumberPosition: PageNumberPosition;
+  pageNumberFormat: PageNumberFormat;
+  pageNumberScale: number;
+  pageNumberStart: number;
+  pageNumberOffsetX: number;
+  pageNumberOffsetY: number;
   showGuides: boolean;
   photoFilter: boolean;
   photoStrength: number;
@@ -290,6 +317,12 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   underlineHeadings: true,
   headingScale: 1.12,
   pageNumbers: false,
+  pageNumberPosition: 'top-right',
+  pageNumberFormat: 'page',
+  pageNumberScale: 0.82,
+  pageNumberStart: 1,
+  pageNumberOffsetX: 0,
+  pageNumberOffsetY: 0,
   showGuides: false,
   photoFilter: false,
   photoStrength: 0.6,

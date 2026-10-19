@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { HandwritingEngine } from '../../lib/handwriting/engine';
-import { findFont, type AssignmentDoc, type HandwritingFont } from '../../lib/handwriting/catalog';
-import { loadFont, runLayout, segment } from '../../lib/handwriting/compose';
-import { pageSignature, renderPage, type RenderInput } from '../../lib/handwriting/render';
+import { findFont, type ActiveGuide, type AssignmentDoc, type HandwritingFont } from '../../lib/handwriting/catalog';
+import { loadFont, runLayout, segment, type Segmented } from '../../lib/handwriting/compose';
+import { pageSignature, renderPage, warmPaperBase, type RenderInput } from '../../lib/handwriting/render';
 
 export interface PagesState {
   canvases: HTMLCanvasElement[];
@@ -13,13 +13,22 @@ export interface PagesState {
 
 interface CachedPage {
   sig: string;
+  fast: boolean;
   canvas: HTMLCanvasElement;
+}
+
+interface PrepCache {
+  key: string;
+  seg: Segmented;
+  sample: string;
 }
 
 /** Only flag "Writing…" for passes that take noticeably long, so quick edits don't flicker the status. */
 const BUSY_DELAY_MS = 350;
 /** Per-chunk time budget before yielding back to the browser. */
 const FRAME_BUDGET_MS = 12;
+/** Idle delay after rapid slider scrubbing before running full WASM ink/paper texture pass. */
+const SETTLE_DELAY_MS = 130;
 
 function sampleChars(text: string): string {
   return Array.from(new Set(Array.from(text))).slice(0, 400).join('') || 'abc';
@@ -47,9 +56,12 @@ const whenVisible = () =>
       });
 
 /**
- * Debounced, incremental render pipeline: prepare text → Rust layout → canvas pages.
- * Pages whose content didn't change keep their canvas; visible pages are drawn
- * first and the rest are filled in during idle time.
+ * Two-stage incremental render pipeline:
+ * 1. Immediate `requestAnimationFrame` pass (`fast: true`) renders visible pages
+ *    in <3ms so dragging Page Layout, Realism, or Style sliders previews smoothly at 60 FPS
+ *    without debounce starvation.
+ * 2. Settled pass (`fast: false`) 130ms after the last change upgrades pages with
+ *    full WASM ink texture / paper rules and fills in off-screen pages during idle time.
  */
 export function useHandwritingPages(
   engine: HandwritingEngine | null,
@@ -58,41 +70,175 @@ export function useHandwritingPages(
   customFonts: HandwritingFont[],
   previewScale: number,
   getVisiblePages?: () => number[],
+  activeGuide?: ActiveGuide,
 ): PagesState {
   const [state, setState] = useState<PagesState>({ canvases: [], input: null, rendering: false, error: null });
   const cache = useRef<CachedPage[]>([]);
+  const prepCache = useRef<PrepCache | null>(null);
+  const loadedFonts = useRef(new Set<string>());
   const visibleRef = useRef(getVisiblePages);
   visibleRef.current = getVisiblePages;
-  const { text, settings, overrides } = doc;
+
+  const latestRef = useRef({ engine, doc, photo, customFonts, previewScale, activeGuide: activeGuide ?? null });
+  latestRef.current = { engine, doc, photo, customFonts, previewScale, activeGuide: activeGuide ?? null };
+
+  const liveRafRef = useRef(0);
+  const prevTextRef = useRef(doc.text);
+
+  const getPrepared = (eng: HandwritingEngine, text: string, latex: boolean, markdown: boolean): PrepCache => {
+    const key = `${latex ? 1 : 0}|${markdown ? 1 : 0}|${text}`;
+    if (prepCache.current && prepCache.current.key === key) {
+      return prepCache.current;
+    }
+    const prepared = eng.prepareText(text, { latex, markdown });
+    const sample = sampleChars(prepared + 'PageofPg.-/() 0123456789');
+    const seg = segment(prepared);
+    const entry: PrepCache = { key, seg, sample };
+    prepCache.current = entry;
+    return entry;
+  };
+
+  // Pre-warm base paper texture whenever paper template or page size changes
+  useEffect(() => {
+    if (!engine || !doc.settings.paper || doc.settings.paper.kind !== 'template') return;
+    const id = window.setTimeout(() => {
+      warmPaperBase(engine, doc.settings, previewScale);
+    }, 20);
+    return () => clearTimeout(id);
+  }, [engine, doc.settings.paper, doc.settings.pageSize, previewScale]);
 
   useEffect(() => {
+    const { settings } = doc;
     if (!engine || !settings.paper) return;
+
+    const textChanged = prevTextRef.current !== doc.text;
+    prevTextRef.current = doc.text;
+
+    const fontA = findFont(settings.fontFamily, customFonts);
+    const fontB = findFont(settings.fontFamilyB, customFonts);
+    const prep = getPrepared(engine, doc.text, settings.latex, settings.markdown);
+    const fontKeyA = `${fontA.family}|${prep.sample}`;
+    const fontKeyB = `${fontB.family}|${prep.sample}`;
+    const fontsReady =
+      loadedFonts.current.has(fontKeyA) && (!settings.combineFonts || loadedFonts.current.has(fontKeyB));
+
+    // Stage 1: Immediate 60fps RAF live preview for slider drags and setting changes
+    // Do NOT cancel an already-queued liveRafRef on intermediate slider moves so every
+    // display frame paints the latest slider position smoothly.
+    if (fontsReady && !textChanged && liveRafRef.current === 0) {
+      liveRafRef.current = requestAnimationFrame(() => {
+        liveRafRef.current = 0;
+        const cur = latestRef.current;
+        if (!cur.engine || !cur.doc.settings.paper) return;
+        try {
+          const s = cur.doc.settings;
+          const fA = findFont(s.fontFamily, cur.customFonts);
+          const fB = findFont(s.fontFamilyB, cur.customFonts);
+          const p = getPrepared(cur.engine, cur.doc.text, s.latex, s.markdown);
+          const layout = runLayout(cur.engine, s, p.seg, fA, fB, cur.doc.overrides);
+          const input: RenderInput = {
+            engine: cur.engine,
+            settings: s,
+            overrides: cur.doc.overrides,
+            layout,
+            units: p.seg.units,
+            fontA: fA,
+            fontB: fB,
+            photo: cur.photo,
+          };
+
+          const base = [
+            JSON.stringify(s),
+            fA.family, fA.sizeAdjust, fB.family, fB.sizeAdjust,
+            cur.photo ? `${cur.photo.src.length}|${cur.photo.src.slice(-32)}` : '',
+            cur.previewScale,
+            cur.activeGuide ?? '',
+          ].join('|');
+
+          const sigs = Array.from({ length: layout.pages }, (_, pageIdx) => pageSignature(input, pageIdx, base));
+          const prev = cache.current;
+          const next: CachedPage[] = sigs.map((sig, pageIdx) =>
+            prev[pageIdx]?.sig === sig
+              ? prev[pageIdx]
+              : ({ sig: '', fast: true, canvas: prev[pageIdx]?.canvas } as CachedPage),
+          );
+
+          const visible = new Set((visibleRef.current?.() ?? [0]).filter((pageIdx) => pageIdx < layout.pages));
+          if (visible.size === 0) visible.add(0);
+
+          for (const pageIdx of visible) {
+            if (next[pageIdx].sig !== sigs[pageIdx]) {
+              next[pageIdx] = {
+                sig: sigs[pageIdx],
+                fast: true,
+                canvas: renderPage(input, pageIdx, {
+                  scale: cur.previewScale,
+                  guides: s.showGuides,
+                  activeGuide: cur.activeGuide,
+                  fast: true,
+                }),
+              };
+            }
+          }
+
+          cache.current = next;
+          setState({ canvases: next.map((c) => c.canvas), input, rendering: false, error: null });
+        } catch {
+          // Settled pass will handle any error state
+        }
+      });
+    }
+
+    // Stage 2: Settled full-quality WASM pass after slider/typing settles
     let cancelled = false;
     let busyTimer = 0;
+    const delay = textChanged ? 110 : SETTLE_DELAY_MS;
+
     const timer = window.setTimeout(async () => {
       try {
         await whenVisible();
         if (cancelled) return;
-        const fontA = findFont(settings.fontFamily, customFonts);
-        const fontB = findFont(settings.fontFamilyB, customFonts);
-        const prepared = engine.prepareText(text, { latex: settings.latex, markdown: settings.markdown });
-        const sample = sampleChars(prepared + 'Page 0123456789');
-        await Promise.all([loadFont(fontA.family, sample), settings.combineFonts ? loadFont(fontB.family, sample) : null]);
+        const fA = findFont(settings.fontFamily, customFonts);
+        const fB = findFont(settings.fontFamilyB, customFonts);
+        const p = getPrepared(engine, doc.text, settings.latex, settings.markdown);
+        const kA = `${fA.family}|${p.sample}`;
+        const kB = `${fB.family}|${p.sample}`;
+
+        if (!loadedFonts.current.has(kA) || (settings.combineFonts && !loadedFonts.current.has(kB))) {
+          await Promise.all([
+            loadFont(fA.family, p.sample).then(() => loadedFonts.current.add(kA)),
+            settings.combineFonts ? loadFont(fB.family, p.sample).then(() => loadedFonts.current.add(kB)) : null,
+          ]);
+        }
         if (cancelled) return;
-        const seg = segment(prepared);
-        const layout = runLayout(engine, settings, seg, fontA, fontB, overrides);
-        const input: RenderInput = { engine, settings, overrides, layout, units: seg.units, fontA, fontB, photo };
+
+        const layout = runLayout(engine, settings, p.seg, fA, fB, doc.overrides);
+        const input: RenderInput = {
+          engine,
+          settings,
+          overrides: doc.overrides,
+          layout,
+          units: p.seg.units,
+          fontA: fA,
+          fontB: fB,
+          photo,
+        };
 
         const base = [
           JSON.stringify(settings),
-          fontA.family, fontA.sizeAdjust, fontB.family, fontB.sizeAdjust,
+          fA.family, fA.sizeAdjust, fB.family, fB.sizeAdjust,
           photo ? `${photo.src.length}|${photo.src.slice(-32)}` : '',
           previewScale,
+          activeGuide ?? '',
         ].join('|');
-        const sigs = Array.from({ length: layout.pages }, (_, p) => pageSignature(input, p, base));
+        const sigs = Array.from({ length: layout.pages }, (_, pageIdx) => pageSignature(input, pageIdx, base));
         const prev = cache.current;
-        const next: CachedPage[] = sigs.map((sig, p) => (prev[p]?.sig === sig ? prev[p] : { sig: '', canvas: prev[p]?.canvas }) as CachedPage);
-        const dirty = sigs.map((_, p) => p).filter((p) => next[p].sig !== sigs[p]);
+        const next: CachedPage[] = sigs.map((sig, pageIdx) =>
+          prev[pageIdx]?.sig === sig && !prev[pageIdx]?.fast
+            ? prev[pageIdx]
+            : ({ sig: '', fast: false, canvas: prev[pageIdx]?.canvas } as CachedPage),
+        );
+        const dirty = sigs.map((_, pageIdx) => pageIdx).filter((pageIdx) => next[pageIdx].sig !== sigs[pageIdx] || next[pageIdx].fast);
 
         const publish = (rendering: boolean) => {
           cache.current = next;
@@ -105,18 +251,27 @@ export function useHandwritingPages(
         }
 
         busyTimer = window.setTimeout(() => !cancelled && setState((s) => ({ ...s, rendering: true })), BUSY_DELAY_MS);
-        const visible = new Set((visibleRef.current?.() ?? [0]).filter((p) => p < layout.pages));
-        const order = [...dirty.filter((p) => visible.has(p)), ...dirty.filter((p) => !visible.has(p))];
+        const visible = new Set((visibleRef.current?.() ?? [0]).filter((pageIdx) => pageIdx < layout.pages));
+        if (visible.size === 0) visible.add(0);
+        const order = [...dirty.filter((pageIdx) => visible.has(pageIdx)), ...dirty.filter((pageIdx) => !visible.has(pageIdx))];
 
         let chunkStart = performance.now();
         for (let i = 0; i < order.length; i++) {
-          const p = order[i];
-          next[p] = { sig: sigs[p], canvas: renderPage(input, p, { scale: previewScale, guides: settings.showGuides }) };
+          const pageIdx = order[i];
+          next[pageIdx] = {
+            sig: sigs[pageIdx],
+            fast: false,
+            canvas: renderPage(input, pageIdx, {
+              scale: previewScale,
+              guides: settings.showGuides,
+              activeGuide: activeGuide ?? null,
+              fast: false,
+            }),
+          };
           if (cancelled) return;
           const more = i < order.length - 1;
           if (more && performance.now() - chunkStart > FRAME_BUDGET_MS) {
             publish(true);
-            // Visible pages get the next frame; off-screen ones wait for idle time.
             await (visible.has(order[i + 1]) ? nextFrame() : whenIdle());
             await whenVisible();
             if (cancelled) return;
@@ -129,13 +284,20 @@ export function useHandwritingPages(
         clearTimeout(busyTimer);
         if (!cancelled) setState((s) => ({ ...s, rendering: false, error: e instanceof Error ? e.message : 'Rendering failed' }));
       }
-    }, 140);
+    }, delay);
+
     return () => {
       cancelled = true;
       clearTimeout(timer);
       clearTimeout(busyTimer);
     };
-  }, [engine, text, settings, overrides, photo, customFonts, previewScale]);
+  }, [engine, doc, photo, customFonts, previewScale, activeGuide]);
+
+  useEffect(() => {
+    return () => {
+      if (liveRafRef.current) cancelAnimationFrame(liveRafRef.current);
+    };
+  }, []);
 
   return state;
 }
