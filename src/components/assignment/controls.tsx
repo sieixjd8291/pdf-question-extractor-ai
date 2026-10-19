@@ -144,18 +144,16 @@ export function SliderField({ label, value, min, max, step = 1, onChange, format
           max={max}
           step={step}
           value={value}
-          onPointerDown={(e) => {
-            try {
-              e.currentTarget.setPointerCapture(e.pointerId);
-            } catch {
-              // Ignore if pointer capture is unsupported
-            }
+          onPointerDown={() => {
             setDragging(true);
+            const end = () => {
+              window.removeEventListener('pointerup', end);
+              window.removeEventListener('pointercancel', end);
+              setDragging(false);
+            };
+            window.addEventListener('pointerup', end);
+            window.addEventListener('pointercancel', end);
           }}
-          onPointerUp={() => setDragging(false)}
-          onPointerCancel={() => setDragging(false)}
-          onLostPointerCapture={() => setDragging(false)}
-          onBlur={() => setDragging(false)}
           onChange={(e) => onChange(Number(e.target.value))}
           style={{ ['--fill' as string]: `${pct}%` }}
         />
