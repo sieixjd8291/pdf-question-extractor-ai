@@ -1,4 +1,5 @@
-import { Ban, PenLine, Shuffle } from 'lucide-react';
+import { useId, useState } from 'react';
+import { Ban, ChevronDown, PenLine, Shuffle } from 'lucide-react';
 import type { AssignmentSettings, CrossStyle, MistakeKinds } from '../../lib/handwriting/catalog';
 import type { MistakeCounts } from '../../lib/handwriting/compose';
 import { SliderField } from './controls';
@@ -32,6 +33,8 @@ interface Props {
 }
 
 export function MistakePanel({ settings: s, counts, onSettings }: Props) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
   const rate = s.autoMistake ? s.mistakeRate : 0;
   const setRate = (v: number) => onSettings(v <= 0 ? { autoMistake: false, mistakeRate: s.mistakeRate || 1 } : { autoMistake: true, mistakeRate: v });
   const enabledKinds = KINDS.filter((k) => s.mistakeKinds[k.id]).length;
@@ -43,7 +46,7 @@ export function MistakePanel({ settings: s, counts, onSettings }: Props) {
   };
 
   return (
-    <section className="am-section am-mistake">
+    <section className={`am-section am-mistake${open ? '' : ' collapsed'}`}>
       <div className="am-mistake-head">
         <span className="am-mistake-icon" aria-hidden="true"><PenLine size={16} /></span>
         <div>
@@ -60,9 +63,19 @@ export function MistakePanel({ settings: s, counts, onSettings }: Props) {
         >
           <span />
         </button>
+        <button
+          type="button"
+          className="am-section-toggle"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          aria-label={`${open ? 'Collapse' : 'Expand'} auto mistakes`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <ChevronDown size={16} aria-hidden />
+        </button>
       </div>
-      {s.autoMistake ? (
-        <>
+      {!open ? null : s.autoMistake ? (
+        <div id={bodyId} className="am-section-body">
           <div className="am-rate-grid" role="radiogroup" aria-label="Mistake frequency presets">
             {PRESETS.map((p) => (
               <button key={p.value} type="button" role="radio" aria-checked={rate === p.value} className={rate === p.value ? 'active' : ''} onClick={() => setRate(p.value)}>
@@ -122,11 +135,13 @@ export function MistakePanel({ settings: s, counts, onSettings }: Props) {
               <Ban size={14} />Turn off
             </button>
           </div>
-        </>
+        </div>
       ) : (
-        <button type="button" className="btn secondary btn-sm am-full" onClick={() => onSettings({ autoMistake: true, mistakeRate: s.mistakeRate || 1 })}>
-          Turn on realistic mistakes
-        </button>
+        <div id={bodyId} className="am-section-body">
+          <button type="button" className="btn secondary btn-sm am-full" onClick={() => onSettings({ autoMistake: true, mistakeRate: s.mistakeRate || 1 })}>
+            Turn on realistic mistakes
+          </button>
+        </div>
       )}
     </section>
   );

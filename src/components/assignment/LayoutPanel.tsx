@@ -1,6 +1,8 @@
 import { DEFAULT_LAYOUT, PAGE_SIZES, type ActiveGuide, type AssignmentSettings, type PageLayout, type PageSizeId } from '../../lib/handwriting/catalog';
 import { Section, Segmented, SliderField, Toggle } from './controls';
 
+export type RulingStatus = 'detected' | 'none' | 'template' | null;
+
 const LAYOUT_PRESETS: Array<{ id: string; label: string; layout: Partial<PageLayout>; fontSize: number }> = [
   { id: 'college', label: 'College ruled', layout: { lineHeight: 52 }, fontSize: 38 },
   { id: 'wide', label: 'Wide ruled', layout: { lineHeight: 64 }, fontSize: 46 },
@@ -81,20 +83,41 @@ export function LayoutFields({
 export function LayoutPanel({
   settings: s,
   overrideCount,
+  rulingStatus,
   onSettings,
   onClearOverrides,
   onActiveGuide,
 }: {
   settings: AssignmentSettings;
   overrideCount: number;
+  rulingStatus: RulingStatus;
   onSettings: (p: Partial<AssignmentSettings>) => void;
   onClearOverrides: () => void;
   onActiveGuide?: (guide: ActiveGuide) => void;
 }) {
-  const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
+  const breaksSnap = (patch: Partial<PageLayout>) =>
+    s.snapToLines && rulingStatus === 'detected' && ('lineHeight' in patch || 'marginTop' in patch || 'marginBottom' in patch);
+  const setLayout = (patch: Partial<PageLayout>) =>
+    onSettings({ layout: { ...s.layout, ...patch }, ...(breaksSnap(patch) ? { snapToLines: false } : {}) });
+  const isTemplate = rulingStatus === 'template';
+  const snapDescription = isTemplate
+    ? 'Template rules are drawn from your line height, so text always sits on them'
+    : !s.snapToLines
+      ? 'Detect the ruled lines on the paper photo and write on them'
+      : rulingStatus === 'detected'
+        ? 'Ruled lines detected — text is aligned to the paper'
+        : rulingStatus === 'none'
+          ? 'No ruled lines found on this paper — adjust the sliders manually'
+          : 'Detecting ruled lines…';
   return (
     <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Live preview</span>}>
       <p className="am-help">Drag any slider to preview margins and line spacing live on the page.</p>
+      <Toggle
+        checked={isTemplate || s.snapToLines}
+        onChange={(v) => !isTemplate && onSettings({ snapToLines: v })}
+        label="Write within the lines"
+        description={snapDescription}
+      />
       <p className="am-label">Page size</p>
       <Segmented<PageSizeId>
         label="Page size"
@@ -109,7 +132,7 @@ export function LayoutPanel({
             key={p.id}
             type="button"
             className={`am-chip-btn${s.layout.lineHeight === p.layout.lineHeight ? ' active' : ''}`}
-            onClick={() => onSettings({ layout: { ...s.layout, ...p.layout }, fontSize: p.fontSize })}
+            onClick={() => onSettings({ layout: { ...s.layout, ...p.layout }, fontSize: p.fontSize, ...(breaksSnap(p.layout) ? { snapToLines: false } : {}) })}
           >
             {p.label}
           </button>

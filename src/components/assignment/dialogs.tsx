@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Download, FileArchive, FileImage, FileText, X } from 'lucide-react';
 import { useDialog } from '../../hooks/useDialog';
 import type { ActiveGuide, PageLayout } from '../../lib/handwriting/catalog';
@@ -99,7 +99,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Headings', 'Start a line with # to write it larger and underlined. Pasted ChatGPT formatting is cleaned automatically.'],
     ['Realism', 'Auto mistakes add believable typos that are crossed out and rewritten. Page numbers can be placed in any corner or dragged to fit printed notebook boxes.'],
     ['Diagrams', 'Add Diagram places an image on the active page. Drag to move, use the corner to resize, and Ink to redraw it in pen colour.'],
-    ['Shortcuts', 'Ctrl/⌘ + Z to undo, Ctrl/⌘ + Shift + Z or Ctrl + Y to redo (outside the text box).'],
+    ['Shortcuts', 'Ctrl/⌘ + Z to undo, Ctrl/⌘ + Y or Ctrl/⌘ + Shift + Z to redo. Works for every setting, slider and diagram; inside text boxes it undoes your typing.'],
   ];
   return (
     <Dialog title="How Assignment Maker works" onClose={onClose}>
@@ -120,19 +120,39 @@ export function ExportMenu({ disabled, busy, pageCount, onExport }: {
   onExport: (format: ExportFormat, scope: 'all' | 'active') => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
+  // The toolbar scrolls horizontally (overflow clips absolute children), so the menu is fixed-positioned.
+  useLayoutEffect(() => {
+    if (!open || !wrap.current) return;
+    const place = () => {
+      const r = wrap.current!.getBoundingClientRect();
+      const width = 248;
+      setPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
+    const close = (e: PointerEvent | KeyboardEvent) => {
       if (e instanceof KeyboardEvent ? e.key === 'Escape' : !wrap.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener('mousedown', close);
+    document.addEventListener('pointerdown', close);
     document.addEventListener('keydown', close);
     return () => {
-      document.removeEventListener('mousedown', close);
+      document.removeEventListener('pointerdown', close);
       document.removeEventListener('keydown', close);
     };
   }, [open]);
+  useEffect(() => {
+    if (disabled || busy) setOpen(false);
+  }, [disabled, busy]);
   const pick = (f: ExportFormat, scope: 'all' | 'active') => {
     setOpen(false);
     onExport(f, scope);
@@ -142,8 +162,8 @@ export function ExportMenu({ disabled, busy, pageCount, onExport }: {
       <button type="button" className="btn primary btn-sm" disabled={disabled || !!busy} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Download size={15} />{busy ?? 'Export'}<ChevronDown size={14} />
       </button>
-      {open && (
-        <div className="am-menu" role="menu">
+      {open && pos && (
+        <div className="am-menu am-menu-fixed" role="menu" style={pos}>
           <button type="button" role="menuitem" onClick={() => pick('pdf', 'all')}><FileText size={15} /><span><strong>PDF document</strong><small>All {pageCount} {pageCount === 1 ? 'page' : 'pages'}, print-ready</small></span></button>
           <button type="button" role="menuitem" onClick={() => pick('jpg', 'active')}><FileImage size={15} /><span><strong>JPG image</strong><small>Current page</small></span></button>
           <button type="button" role="menuitem" onClick={() => pick('png', 'active')}><FileImage size={15} /><span><strong>PNG image</strong><small>Current page, lossless</small></span></button>

@@ -8,12 +8,14 @@ import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, stockL
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
+import { detectRuling, layoutFromRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
+import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
 import { TextPanel } from './TextPanel';
-import { QuickBar } from './QuickBar';
+import { ActionBar, QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
 import { LayoutPanel } from './LayoutPanel';
 import { FontPanel } from './FontPanel';
@@ -139,6 +141,31 @@ export function AssignmentMaker() {
     };
   }, [doc.diagrams, color, tinted]);
 
+  const [rulingStatus, setRulingStatus] = useState<RulingStatus>(null);
+  const layoutRef = useRef(s.layout);
+  layoutRef.current = s.layout;
+  const fontSizeRef = useRef(s.fontSize);
+  fontSizeRef.current = s.fontSize;
+  const paperKind = s.paper?.kind ?? null;
+
+  useEffect(() => {
+    if (!paperKind) return setRulingStatus(null);
+    if (paperKind === 'template') return setRulingStatus('template');
+    if (!s.snapToLines || !photo) return setRulingStatus(null);
+    const ruling = detectRuling(photo, size.width, size.height);
+    if (!ruling) return setRulingStatus('none');
+    setRulingStatus('detected');
+    const cur = layoutRef.current;
+    const next = layoutFromRuling(ruling, cur, size.height);
+    const changed = (Object.keys(next) as Array<keyof PageLayout>).some((k) => Math.abs(next[k] - cur[k]) > 0.5);
+    const ratio = fontSizeRef.current / next.lineHeight;
+    const patch: Partial<typeof s> = {};
+    if (changed) patch.layout = next;
+    if (ratio < 0.55 || ratio > 0.85) patch.fontSize = Math.round(next.lineHeight * 0.72);
+    if (Object.keys(patch).length) updateSettings(patch, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.snapToLines, photo, paperKind, size.width, size.height, updateSettings]);
+
   const diagramsWithTint: Diagram[] = useMemo(
     () => doc.diagrams.map((d) => ({ ...d, tintedSrc: tinted[`${d.id}|${color}`] ?? null })),
     [doc.diagrams, tinted, color],
@@ -147,13 +174,18 @@ export function AssignmentMaker() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest('textarea, input, [contenteditable="true"]')) return;
+      // Text fields keep their native caret-aware undo; sliders, switches and buttons use document history.
+      const editing = target.closest(
+        'textarea, [contenteditable="true"], input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="button"])',
+      );
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === 'z') {
+      const key = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y' : e.key.toLowerCase();
+      if (mod && !e.altKey && (key === 'z' || key === 'y') && editing) return;
+      if (mod && !e.altKey && key === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
-      } else if (mod && e.key.toLowerCase() === 'y') {
+      } else if (mod && !e.altKey && key === 'y') {
         e.preventDefault();
         redo();
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDiagram) {
@@ -301,29 +333,7 @@ export function AssignmentMaker() {
 
   return (
     <div className="am-root" ref={rootRef}>
-      <QuickBarM
-        settings={s}
-        onSettings={updateSettings}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        undo={undo}
-        redo={redo}
-        onAddDiagram={() => openDiagramPicker(activePage)}
-        diagramDisabled={!s.paper}
-        exportMenu={
-          <ExportMenu
-            disabled={!s.paper || !pages.input}
-            busy={exportBusy}
-            pageCount={pageCount}
-            onExport={runExport}
-          />
-        }
-        onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
-        onHelp={() => setHelpOpen(true)}
-        fullscreen={fullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        onReset={() => setConfirmReset(true)}
-      />
+      <QuickBarM settings={s} onSettings={updateSettings} />
 
       <div className="am-body">
         <div className="am-stage">
@@ -397,6 +407,27 @@ export function AssignmentMaker() {
         </div>
 
         <aside className="am-sidebar" aria-label="Handwriting settings">
+          <ActionBar
+            canUndo={canUndo}
+            canRedo={canRedo}
+            undo={undo}
+            redo={redo}
+            onAddDiagram={() => openDiagramPicker(activePage)}
+            diagramDisabled={!s.paper}
+            exportMenu={
+              <ExportMenu
+                disabled={!s.paper || !pages.input}
+                busy={exportBusy}
+                pageCount={pageCount}
+                onExport={runExport}
+              />
+            }
+            onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
+            onHelp={() => setHelpOpen(true)}
+            fullscreen={fullscreen}
+            onToggleFullscreen={toggleFullscreen}
+            onReset={() => setConfirmReset(true)}
+          />
           <TextPanelM
             text={doc.text}
             pages={pageCount || 1}
@@ -411,6 +442,7 @@ export function AssignmentMaker() {
           <LayoutPanelM
             settings={s}
             overrideCount={Object.keys(doc.overrides).length}
+            rulingStatus={rulingStatus}
             onSettings={updateSettings}
             onClearOverrides={clearOverrides}
             onActiveGuide={setActiveGuide}
