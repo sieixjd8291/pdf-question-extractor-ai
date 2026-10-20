@@ -230,7 +230,7 @@ export function QuickBar({
       {/* Document & canvas tools (combined into 1 line) */}
       <div className="am-btn-group">
         <button type="button" className="icon-button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
-        <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
+        <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Y)" aria-keyshortcuts="Control+Y Control+Shift+Z"><Redo2 size={16} /></button>
       </div>
 
       <button type="button" className="btn secondary btn-sm" onClick={onAddDiagram} disabled={diagramDisabled}>

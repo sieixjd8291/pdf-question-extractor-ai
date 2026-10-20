@@ -267,6 +267,8 @@ export interface AssignmentSettings {
   pageNumberOffsetX: number;
   pageNumberOffsetY: number;
   showGuides: boolean;
+  /** Auto-detect the paper photo's ruling and keep text on its lines. */
+  snapToLines: boolean;
   photoFilter: boolean;
   photoStrength: number;
   seed: number;
@@ -324,6 +326,7 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   pageNumberOffsetX: 0,
   pageNumberOffsetY: 0,
   showGuides: false,
+  snapToLines: true,
   photoFilter: false,
   photoStrength: 0.6,
   seed: 1337,

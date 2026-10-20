@@ -825,6 +825,8 @@
   border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
   color: var(--secondary); cursor: pointer; transition: background var(--t), color var(--t);
 }
+.am-menu.am-menu-fixed { position: fixed; right: auto; z-index: 60; }
+.am-mistake .am-section-toggle { border-color: var(--am-warm-line); }
 .am-section-toggle:hover { background: var(--canvas); color: var(--ink); }
 .am-section-toggle:focus-visible { outline: 2px solid var(--am-warm); outline-offset: 1px; }
 .am-section-toggle svg { transition: transform .18s ease; }
