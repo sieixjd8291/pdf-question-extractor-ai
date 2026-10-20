@@ -64,12 +64,13 @@
 .am-btn-group { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); flex-shrink: 0; }
 .am-btn-group .icon-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .am-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .am-actionbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 8px 16px 8px 12px; margin-left: auto; flex-shrink: 0; border-left: 1px solid var(--line); }
   .am-actionbar .am-btn-group .icon-button { border: 0; border-radius: 7px; background: transparent; width: 30px; height: 30px; }
   .am-actionbar .am-btn-group .icon-button:hover:not(:disabled) { background: var(--canvas); }
   .am-actionbar .btn.secondary.btn-sm { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 9px; }
   .am-actionbar-icons { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
   .am-actionbar-icons .icon-button { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; }
+  @media (max-width: 1280px) { .am-actionbar .btn.secondary.btn-sm span { display: none; } .am-actionbar { padding-left: 8px; padding-right: 8px; } }
 
   /* ---------- Body ---------- */
 /* The app shell clips overflow, so the stage and sidebar each own their scroll. */
@@ -686,6 +687,8 @@
 
 /* Quick toolbar: unified 1-line tool strip */
 .qb-wrap {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
   position: sticky;
   top: 0;
@@ -694,6 +697,8 @@
   border-bottom: 1px solid var(--line);
 }
 .qb {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -826,6 +831,34 @@
 .qb-slider span { display: flex; justify-content: space-between; }
 .qb-slider b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .qb-slider input { accent-color: var(--am-warm); }
+
+/* Compact toolbar: 30px controls, tighter rhythm, same readable 12.5-13px type */
+.qb { gap: 6px; padding: 6px 12px; }
+.qb-group { border-radius: 8px; }
+.qb-btn { min-height: 30px; padding: 0 8px; gap: 5px; font-size: 12.5px; border-radius: 7px; }
+.qb-btn svg { width: 15px; height: 15px; }
+.qb > .qb-pill { border-radius: 8px; }
+.qb-arrow { padding: 0 5px; border-radius: 0 7px 7px 0; }
+.qb-font span { font-size: 15px; max-width: 150px; }
+.qb-value { min-width: 30px; font-size: 13px; }
+.qb-seg { padding: 2px; }
+.qb-seg .qb-btn { min-height: 26px; padding: 0 6px; }
+.qb-dot { width: 15px; height: 15px; }
+.qb-two small { font-size: 10px; }
+.qb-badge { padding: 0 6px; font-size: 10.5px; line-height: 18px; }
+.qb-divider { height: 20px; }
+.am-actionbar { gap: 4px; padding: 6px 12px 6px 10px; }
+.am-actionbar .btn.secondary.btn-sm,
+.am-actionbar .btn.primary.btn-sm { min-height: 30px; padding: 0 9px; gap: 5px; font-size: 12.5px; border-radius: 8px; }
+.am-actionbar .btn svg { width: 15px; height: 15px; }
+.am-actionbar .am-btn-group { padding: 1px; border-radius: 8px; }
+.am-actionbar .am-btn-group .icon-button { width: 26px; height: 26px; border-radius: 6px; }
+.am-actionbar .am-btn-group .icon-button svg,
+.am-actionbar-icons .icon-button svg { width: 15px; height: 15px; }
+.am-actionbar-icons { gap: 0; margin-left: 2px; }
+.am-actionbar-icons .icon-button { width: 28px; height: 28px; border: 0; background: transparent; border-radius: 7px; color: var(--secondary); cursor: pointer; }
+.am-actionbar-icons .icon-button:hover { background: var(--canvas); color: var(--ink); }
+@media (max-width: 1500px) { .am-actionbar .btn.secondary.btn-sm span { display: none; } .am-actionbar .btn.secondary.btn-sm { padding: 0 8px; } }
 .am-section-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .am-section-toggle {
   display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0;
