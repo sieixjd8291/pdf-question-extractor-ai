@@ -64,12 +64,13 @@
 .am-btn-group { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); flex-shrink: 0; }
 .am-btn-group .icon-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .am-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .am-actionbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 8px 16px 8px 12px; margin-left: auto; flex-shrink: 0; border-left: 1px solid var(--line); }
   .am-actionbar .am-btn-group .icon-button { border: 0; border-radius: 7px; background: transparent; width: 30px; height: 30px; }
   .am-actionbar .am-btn-group .icon-button:hover:not(:disabled) { background: var(--canvas); }
   .am-actionbar .btn.secondary.btn-sm { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 9px; }
   .am-actionbar-icons { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
   .am-actionbar-icons .icon-button { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; }
+  @media (max-width: 1280px) { .am-actionbar .btn.secondary.btn-sm span { display: none; } .am-actionbar { padding-left: 8px; padding-right: 8px; } }
 
   /* ---------- Body ---------- */
 /* The app shell clips overflow, so the stage and sidebar each own their scroll. */
@@ -686,6 +687,8 @@
 
 /* Quick toolbar: unified 1-line tool strip */
 .qb-wrap {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
   position: sticky;
   top: 0;
@@ -694,6 +697,8 @@
   border-bottom: 1px solid var(--line);
 }
 .qb {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;

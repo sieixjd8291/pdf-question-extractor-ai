@@ -114,7 +114,7 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
   );
 }
 
-export function QuickBar({ settings: s, onSettings }: Pick<QuickBarProps, 'settings' | 'onSettings'>) {
+export function QuickBar({ settings: s, onSettings, ...actions }: QuickBarProps) {
   const [open, setOpen] = useState<string | null>(null);
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
@@ -211,6 +211,7 @@ export function QuickBar({ settings: s, onSettings }: Pick<QuickBarProps, 'setti
       </div>
 
     </nav>
+    <ActionBar {...actions} />
     </div>
   );
 }
