@@ -114,22 +114,7 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
   );
 }
 
-export function QuickBar({
-  settings: s,
-  onSettings,
-  undo,
-  redo,
-  canUndo,
-  canRedo,
-  onAddDiagram,
-  diagramDisabled,
-  exportMenu,
-  onShuffle,
-  onHelp,
-  fullscreen,
-  onToggleFullscreen,
-  onReset,
-}: QuickBarProps) {
+export function QuickBar({ settings: s, onSettings }: Pick<QuickBarProps, 'settings' | 'onSettings'>) {
   const [open, setOpen] = useState<string | null>(null);
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
@@ -225,36 +210,46 @@ export function QuickBar({
         <button type="button" className="qb-btn" aria-label="More mistakes" disabled={rate >= 10} onClick={() => setRate(rate + 1)}><Plus size={14} /></button>
       </div>
 
-      <div className="qb-divider" aria-hidden="true" />
+    </nav>
+    </div>
+  );
+}
 
-      {/* Document & canvas tools (combined into 1 line) */}
+export type ActionBarProps = Pick<
+  QuickBarProps,
+  'undo' | 'redo' | 'canUndo' | 'canRedo' | 'onAddDiagram' | 'diagramDisabled' | 'exportMenu' | 'onShuffle' | 'onHelp' | 'fullscreen' | 'onToggleFullscreen' | 'onReset'
+>;
+
+export function ActionBar({
+  undo, redo, canUndo, canRedo, onAddDiagram, diagramDisabled, exportMenu, onShuffle, onHelp, fullscreen, onToggleFullscreen, onReset,
+}: ActionBarProps) {
+  return (
+    <div className="am-actionbar" role="toolbar" aria-label="Document actions">
       <div className="am-btn-group">
         <button type="button" className="icon-button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
         <button type="button" className="icon-button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Y)" aria-keyshortcuts="Control+Y Control+Shift+Z"><Redo2 size={16} /></button>
       </div>
 
       <button type="button" className="btn secondary btn-sm" onClick={onAddDiagram} disabled={diagramDisabled}>
-        <Layers size={15} /><span className="hide-sm">Add diagram</span>
+        <Layers size={15} /><span>Add diagram</span>
       </button>
 
       {exportMenu}
 
-      <button type="button" className="icon-button" onClick={onShuffle} aria-label="Re-roll handwriting variation" title="Re-roll handwriting variation">
-        <Shuffle size={16} />
-      </button>
-
-      <button type="button" className="icon-button" onClick={onHelp} aria-label="Help" title="Help">
-        <CircleHelp size={16} />
-      </button>
-
-      <button type="button" className="icon-button hide-sm" onClick={onToggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
-        {fullscreen ? <Minimize size={16} /> : <Expand size={16} />}
-      </button>
-
-      <button type="button" className="icon-button" onClick={onReset} aria-label="Reset document" title="Reset document">
-        <RotateCcw size={16} />
-      </button>
-    </nav>
+      <div className="am-actionbar-icons">
+        <button type="button" className="icon-button" onClick={onShuffle} aria-label="Re-roll handwriting variation" title="Re-roll handwriting variation">
+          <Shuffle size={16} />
+        </button>
+        <button type="button" className="icon-button" onClick={onHelp} aria-label="Help" title="Help">
+          <CircleHelp size={16} />
+        </button>
+        <button type="button" className="icon-button hide-sm" onClick={onToggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+          {fullscreen ? <Minimize size={16} /> : <Expand size={16} />}
+        </button>
+        <button type="button" className="icon-button" onClick={onReset} aria-label="Reset document" title="Reset document">
+          <RotateCcw size={16} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -15,7 +15,7 @@ import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
 import { TextPanel } from './TextPanel';
-import { QuickBar } from './QuickBar';
+import { ActionBar, QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
 import { LayoutPanel } from './LayoutPanel';
 import { FontPanel } from './FontPanel';
@@ -333,29 +333,7 @@ export function AssignmentMaker() {
 
   return (
     <div className="am-root" ref={rootRef}>
-      <QuickBarM
-        settings={s}
-        onSettings={updateSettings}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        undo={undo}
-        redo={redo}
-        onAddDiagram={() => openDiagramPicker(activePage)}
-        diagramDisabled={!s.paper}
-        exportMenu={
-          <ExportMenu
-            disabled={!s.paper || !pages.input}
-            busy={exportBusy}
-            pageCount={pageCount}
-            onExport={runExport}
-          />
-        }
-        onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
-        onHelp={() => setHelpOpen(true)}
-        fullscreen={fullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        onReset={() => setConfirmReset(true)}
-      />
+      <QuickBarM settings={s} onSettings={updateSettings} />
 
       <div className="am-body">
         <div className="am-stage">
@@ -429,6 +407,27 @@ export function AssignmentMaker() {
         </div>
 
         <aside className="am-sidebar" aria-label="Handwriting settings">
+          <ActionBar
+            canUndo={canUndo}
+            canRedo={canRedo}
+            undo={undo}
+            redo={redo}
+            onAddDiagram={() => openDiagramPicker(activePage)}
+            diagramDisabled={!s.paper}
+            exportMenu={
+              <ExportMenu
+                disabled={!s.paper || !pages.input}
+                busy={exportBusy}
+                pageCount={pageCount}
+                onExport={runExport}
+              />
+            }
+            onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
+            onHelp={() => setHelpOpen(true)}
+            fullscreen={fullscreen}
+            onToggleFullscreen={toggleFullscreen}
+            onReset={() => setConfirmReset(true)}
+          />
           <TextPanelM
             text={doc.text}
             pages={pageCount || 1}

@@ -64,7 +64,14 @@
 .am-btn-group { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); flex-shrink: 0; }
 .am-btn-group .icon-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ---------- Body ---------- */
+  .am-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .am-actionbar .am-btn-group .icon-button { border: 0; border-radius: 7px; background: transparent; width: 30px; height: 30px; }
+  .am-actionbar .am-btn-group .icon-button:hover:not(:disabled) { background: var(--canvas); }
+  .am-actionbar .btn.secondary.btn-sm { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 9px; }
+  .am-actionbar-icons { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+  .am-actionbar-icons .icon-button { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; }
+
+  /* ---------- Body ---------- */
 /* The app shell clips overflow, so the stage and sidebar each own their scroll. */
 .am-body { display: flex; flex: 1; min-height: 0; overflow: hidden; align-items: stretch; }
 .am-stage { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px 64px; }
