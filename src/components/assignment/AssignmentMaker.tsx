@@ -304,7 +304,6 @@ export function AssignmentMaker() {
       <QuickBarM
         settings={s}
         onSettings={updateSettings}
-        onActiveGuide={setActiveGuide}
         canUndo={canUndo}
         canRedo={canRedo}
         undo={undo}

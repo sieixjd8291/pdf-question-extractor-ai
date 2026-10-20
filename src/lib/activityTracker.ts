@@ -43,15 +43,6 @@ export function recordActivity(entry: ActivityEntry) {
   overwriteActivity([entry, ...all]);
 }
 
-export interface ActivityStats {
-  totalRuns: number;
-  questionsExtracted: number;
-  chaptersMapped: number;
-  pagesProcessed: number;
-  runsPerMode: Record<AppMode, number>;
-  lastActivity: number | null;
-}
-
 export function newActivityId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();

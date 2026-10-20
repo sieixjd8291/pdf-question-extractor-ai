@@ -1,1 +1,55 @@
-{"name":"pdf-studio","private":true,"version":"1.0.0","type":"module","scripts":{"dev":"npm run prepare:pdf \u0026\u0026 tsx watch --clear-screen\u003dfalse server/server.ts","build":"npm run prepare:pdf \u0026\u0026 vite build \u0026\u0026 esbuild server/server.ts --bundle --platform\u003dnode --format\u003desm --packages\u003dexternal --outfile\u003ddist/server.mjs","vercel-build":"npm run prepare:pdf \u0026\u0026 vite build","start":"node scripts/start.mjs","preview":"vite preview","clean":"rm -rf dist","lint":"tsc --noEmit","test:orientation":"tsx scripts/verify-orientation.ts","test:crop":"tsx scripts/verify-crop-detection.ts \u0026\u0026 tsx scripts/verify-local-edges.ts --assert","test:latex-repair":"tsx scripts/verify-latex-repair.ts","prepare:pdf":"node scripts/copy-pdf-assets.mjs","check":"npm run lint \u0026\u0026 npm run build"},"dependencies":{"@ai-sdk/google":"^4.0.86","@google/genai":"^2.4.0","@supabase/supabase-js":"^2.45.0","ai":"^7.0.123","dotenv":"^17.2.3","express":"^4.21.2","jspdf":"^4.2.1","jszip":"^3.10.1","lucide-react":"^0.546.0","multer":"^2.4.0","onnxruntime-web":"^1.30.0","pdf-lib":"^1.17.1","pdfjs-dist":"^6.2.108","react":"^19.0.1","react-dom":"^19.0.1","sharp":"^0.35.4","zod":"^4.6.5"},"devDependencies":{"@tailwindcss/vite":"^4.3.3","@types/express":"^4.17.21","@types/express-serve-static-core":"4.19.9","@types/multer":"^2.2.0","@types/node":"^22.14.0","@types/react":"^19.0.0","@types/react-dom":"^19.0.0","@vitejs/plugin-react":"^5.2.0","esbuild":"^0.25.0","tailwindcss":"^4.1.14","tsx":"^4.21.0","typescript":"~5.8.2","vite":"^6.2.3"},"packageManager":"npm@10.9.2","engines":{"node":"22.x"}}
+{
+  "name": "pdf-studio",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run prepare:pdf && tsx watch --clear-screen=false server/server.ts",
+    "build": "npm run prepare:pdf && vite build && esbuild server/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.mjs",
+    "vercel-build": "npm run prepare:pdf && vite build",
+    "start": "node scripts/start.mjs",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "prepare:pdf": "node scripts/copy-pdf-assets.mjs",
+    "check": "npm run lint && npm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.86",
+    "@google/genai": "^2.4.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "ai": "^7.0.123",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "jspdf": "^4.2.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.546.0",
+    "multer": "^2.4.0",
+    "onnxruntime-web": "^1.30.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "sharp": "^0.35.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/express": "^4.17.21",
+    "@types/express-serve-static-core": "4.19.9",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  },
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": "22.x"
+  }
+}

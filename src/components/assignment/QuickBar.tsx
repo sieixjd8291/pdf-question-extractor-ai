@@ -22,7 +22,6 @@ import {
   INK_PRESETS,
   PENS,
   inkColor,
-  type ActiveGuide,
   type AssignmentSettings,
   type TextAlign,
 } from '../../lib/handwriting/catalog';
@@ -32,7 +31,6 @@ type Patch = (patch: Partial<AssignmentSettings>, undoable?: boolean) => void;
 export interface QuickBarProps {
   settings: AssignmentSettings;
   onSettings: Patch;
-  onActiveGuide?: (g: ActiveGuide) => void;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -119,7 +117,6 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
 export function QuickBar({
   settings: s,
   onSettings,
-  onActiveGuide,
   undo,
   redo,
   canUndo,
