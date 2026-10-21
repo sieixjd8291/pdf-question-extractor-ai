@@ -24,6 +24,7 @@ import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
 import { ExportMenu, HelpDialog, PageLayoutDialog, PaperDialog } from './dialogs';
+import { MobileTabs, type MobileView } from './MobileTabs';
 
 // Panels only depend on settings + stable callbacks, so typing or page
 // rendering progress shouldn't re-render them.
@@ -83,6 +84,7 @@ export function AssignmentMaker() {
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [tinted, setTinted] = useState<Record<string, string>>({});
+  const [mobileView, setMobileView] = useState<MobileView>('preview');
   const [previewScale] = useState(() => (window.matchMedia('(pointer: coarse)').matches ? 0.6 : 1));
 
   const s = doc.settings;
@@ -290,6 +292,7 @@ export function AssignmentMaker() {
       update((d) => ({ ...d, diagrams: [...d.diagrams, diagram] }), false);
       setSelectedDiagram(diagram.id);
       setActivePage(page);
+      setMobileView('preview');
     } catch {
       toast.error('That image could not be added.');
     }
@@ -357,7 +360,7 @@ export function AssignmentMaker() {
     onReset={() => setConfirmReset(true)}
       />
 
-      <div className="am-body">
+      <div className="am-body" data-mobile-view={mobileView}>
         <div className="am-stage">
           {engineError ? (
             <div className="am-state" role="alert">
@@ -459,6 +462,9 @@ export function AssignmentMaker() {
           />
         </aside>
       </div>
+
+      <MobileTabs view={mobileView} onChange={setMobileView} pageCount={s.paper ? Math.max(1, pageCount) : null} />
+
 
       <input
         ref={diagramInputRef}
