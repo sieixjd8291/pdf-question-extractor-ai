@@ -1420,12 +1420,15 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
 }
 
 @media (max-width: 720px) {
-  .header-inner { padding: 8px 16px 4px; flex-wrap: wrap; gap: 8px; }
-  .brand > div { font-size: 14.5px; }
+  .header-inner { padding: 8px 12px; flex-wrap: nowrap; gap: 8px; }
+  .brand { min-width: 0; }
+  .brand > div { font-size: 14.5px; white-space: nowrap; }
+  .brand small { display: none; }
   .brand-icon { width: 28px; height: 28px; }
   .header-actions { flex: initial; }
-  .mode-nav { order: 3; width: 100%; max-width: 100%; min-width: 0; }
-  .mode-nav button { flex: 1; min-width: 0; gap: 5px; padding: 0 6px; font-size: 12.5px; }
+  .mode-nav { width: auto; max-width: none; min-width: 0; margin-left: auto; }
+  .mode-nav button { min-width: 0; min-height: 32px; gap: 5px; padding: 0 10px; font-size: 12.5px; }
+  .header-actions .icon-button { min-width: 34px; min-height: 34px; width: 34px; height: 34px; }
   .latex-toolbar { row-gap: 8px; }
   /* Each toolbar group gets its own full-width row and wraps internally
      instead of squeezing sideways past the screen edge */

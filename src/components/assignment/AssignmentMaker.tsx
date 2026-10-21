@@ -360,7 +360,7 @@ export function AssignmentMaker() {
     onReset={() => setConfirmReset(true)}
       />
 
-      <div className="am-body" data-mobile-view={s.paper ? mobileView : 'preview'}>
+      <div className="am-body" data-mobile-view={mobileView}>
         <div className="am-stage">
           {engineError ? (
             <div className="am-state" role="alert">
@@ -463,7 +463,8 @@ export function AssignmentMaker() {
         </aside>
       </div>
 
-      {s.paper && <MobileTabs view={mobileView} onChange={setMobileView} pageCount={Math.max(1, pageCount)} />}
+      <MobileTabs view={mobileView} onChange={setMobileView} pageCount={s.paper ? Math.max(1, pageCount) : null} />
+
 
       <input
         ref={diagramInputRef}
