@@ -8,6 +8,8 @@ import {
   type Diagram,
   type HandwritingFont,
   type PageLayout,
+  type PaperChoice,
+  samePaper,
 } from './catalog';
 import { GLYPH_FLAG, GLYPH_STRIDE, layoutForPage, type LayoutResult } from './compose';
 
@@ -20,6 +22,27 @@ export interface RenderInput {
   fontA: HandwritingFont;
   fontB: HandwritingFont;
   photo: HTMLImageElement | null;
+  pagePapers: Record<number, PaperChoice>;
+  /** Per-page paper images keyed by `pageImageKey`. */
+  images: Record<string, HTMLImageElement>;
+}
+
+export function pageImageKey(paper: PaperChoice): string | null {
+  if (paper.kind === 'stock') return `stock:${paper.id}`;
+  if (paper.kind === 'photo' && paper.photoId) return `photo:${paper.photoId}`;
+  return null;
+}
+
+export function paperForPage(s: AssignmentSettings, pagePapers: Record<number, PaperChoice> | undefined, page: number): PaperChoice | null {
+  return pagePapers?.[page] ?? s.paper;
+}
+
+function resolvePaper(input: RenderInput, page: number): { paper: PaperChoice | null; photo: HTMLImageElement | null } {
+  const { settings: s } = input;
+  const own = input.pagePapers?.[page];
+  if (!own || samePaper(own, s.paper)) return { paper: s.paper, photo: input.photo };
+  const key = pageImageKey(own);
+  return { paper: own, photo: key ? input.images?.[key] ?? null : null };
 }
 
 function makeCanvas(w: number, h: number): HTMLCanvasElement {
@@ -99,18 +122,19 @@ export function warmPaperBase(engine: HandwritingEngine, s: AssignmentSettings, 
  * rule geometry pixel-for-pixel in <0.5ms per frame.
  */
 function fastPaperCanvas(input: RenderInput, page: number, scale: number): HTMLCanvasElement | null {
-  const { settings: s, engine, photo } = input;
-  if (!s.paper) return null;
+  const { settings: s, engine } = input;
+  const { paper, photo } = resolvePaper(input, page);
+  if (!paper) return null;
   const size = PAGE_SIZES[s.pageSize];
   const L = layoutForPage(s, input.overrides, page);
   const W = Math.round(size.width * scale);
   const H = Math.round(size.height * scale);
 
-  if (s.paper.kind !== 'template') {
+  if (paper.kind !== 'template') {
     return paperCanvas(input, page, scale);
   }
 
-  const template = s.paper.template;
+  const template = paper.template;
   const exactKey = UNRULED_TEMPLATES.has(template)
     ? `t${template}|${W}x${H}`
     : `t${template}|${W}x${H}|${L.lineHeight}|${L.marginTop}|${L.marginLeft}`;
@@ -263,22 +287,23 @@ function fastPaperCanvas(input: RenderInput, page: number, scale: number): HTMLC
 }
 
 function paperCanvas(input: RenderInput, page: number, scale: number): HTMLCanvasElement | null {
-  const { settings: s, engine, photo } = input;
+  const { settings: s, engine } = input;
+  const { paper, photo } = resolvePaper(input, page);
   const size = PAGE_SIZES[s.pageSize];
   const L = layoutForPage(s, input.overrides, page);
   const W = Math.round(size.width * scale);
   const H = Math.round(size.height * scale);
-  if (!s.paper) return null;
-  const key = s.paper.kind !== 'template'
+  if (!paper) return null;
+  const key = paper.kind !== 'template'
     ? `img|${photo?.src.length}|${photo?.src.slice(-32)}|${W}x${H}`
-    : UNRULED_TEMPLATES.has(s.paper.template)
-      ? `t${s.paper.template}|${W}x${H}`
-      : `t${s.paper.template}|${W}x${H}|${L.lineHeight}|${L.marginTop}|${L.marginLeft}`;
+    : UNRULED_TEMPLATES.has(paper.template)
+      ? `t${paper.template}|${W}x${H}`
+      : `t${paper.template}|${W}x${H}|${L.lineHeight}|${L.marginTop}|${L.marginLeft}`;
   const hit = paperCache.get(key);
   if (hit) return hit;
   const c = makeCanvas(W, H);
   const ctx = c.getContext('2d')!;
-  if (s.paper.kind !== 'template') {
+  if (paper.kind !== 'template') {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, W, H);
     if (!photo) return c;
@@ -288,7 +313,7 @@ function paperCanvas(input: RenderInput, page: number, scale: number): HTMLCanva
     const dh = photo.naturalHeight * r;
     ctx.drawImage(photo, (W - dw) / 2, (H - dh) / 2, dw, dh);
   } else {
-    const img = engine.renderPaper(W, H, s.paper.template, L.lineHeight * scale, L.marginTop * scale, L.marginLeft * scale, 7919);
+    const img = engine.renderPaper(W, H, paper.template, L.lineHeight * scale, L.marginTop * scale, L.marginLeft * scale, 7919);
     ctx.putImageData(img, 0, 0);
   }
   if (paperCache.size > 12) paperCache.delete(paperCache.keys().next().value!);
@@ -356,6 +381,7 @@ export function computePageNumberPlacement(
   page: number,
   textWidth: number,
   fontPx: number,
+  paper: PaperChoice | null = s.paper,
 ): PageNumberBox {
   const size = PAGE_SIZES[s.pageSize];
   const L = layoutForPage(s, overrides, page);
@@ -373,7 +399,7 @@ export function computePageNumberPlacement(
   let baseY: number;
 
   if (isTop) {
-    if (s.paper?.kind === 'stock' && s.paper.id === 'spiral-notebook') {
+    if (paper?.kind === 'stock' && paper.id === 'spiral-notebook') {
       const k = Math.max(size.width / 1240, size.height / 1754);
       const ox = (size.width - 1240 * k) / 2;
       const oy = (size.height - 1754 * k) / 2;
@@ -387,10 +413,10 @@ export function computePageNumberPlacement(
       } else {
         baseY = oy + 146 * k;
       }
-    } else if (s.paper?.kind === 'template' && s.paper.template === 8) {
+    } else if (paper?.kind === 'template' && paper.template === 8) {
       const headerY = Math.max(topLimit * 0.6, L.marginTop - L.lineHeight * 1.35);
       baseY = Math.max(fontPx * 1.05, headerY - Math.max(16, L.lineHeight * 0.34));
-    } else if (s.paper?.kind === 'template' && (s.paper.template === 1 || s.paper.template === 2 || s.paper.template === 5 || s.paper.template === 9)) {
+    } else if (paper?.kind === 'template' && (paper.template === 1 || paper.template === 2 || paper.template === 5 || paper.template === 9)) {
       let topRuleY = L.marginTop;
       while (topRuleY - L.lineHeight + ruleOffset >= topLimit) {
         topRuleY -= L.lineHeight;
@@ -404,7 +430,7 @@ export function computePageNumberPlacement(
       baseY = Math.max(fontPx * 1.1, Math.min(L.marginTop - Math.max(L.lineHeight * 0.95, fontPx * 1.3), L.marginTop * 0.62));
     }
   } else {
-    if (s.paper?.kind === 'template' && (s.paper.template === 1 || s.paper.template === 2 || s.paper.template === 5 || s.paper.template === 8 || s.paper.template === 9)) {
+    if (paper?.kind === 'template' && (paper.template === 1 || paper.template === 2 || paper.template === 5 || paper.template === 8 || paper.template === 9)) {
       let y = L.marginTop;
       while (y <= size.height - L.marginBottom + 0.5) {
         y += L.lineHeight;
@@ -505,7 +531,7 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
     const chars = Array.from(label);
     const charWidths = chars.map((ch) => ctx.measureText(ch).width / scale + s.letterSpacing * 0.5);
     const totalW = Math.max(12, charWidths.reduce((acc, w) => acc + w, 0));
-    pageNumBox = computePageNumberPlacement(s, input.overrides, page, totalW, fontPx);
+    pageNumBox = computePageNumberPlacement(s, input.overrides, page, totalW, fontPx, resolvePaper(input, page).paper);
     const tiltRad = (s.tilt * Math.PI) / 180;
     const pnStrokeW = strokeW * numScale;
 
@@ -605,6 +631,11 @@ export function pageSignature(input: RenderInput, page: number, base: string): s
   }
   const ov = overrides[page];
   if (ov) h = mixString(h, JSON.stringify(ov));
+  const own = input.pagePapers?.[page];
+  if (own) {
+    const img = resolvePaper(input, page).photo;
+    h = mixString(h, `${JSON.stringify(own)}|${img ? `${img.src.length}|${img.src.slice(-32)}` : ''}`);
+  }
   const idxs = layout.glyphsByPage[page] ?? [];
   for (const idx of idxs) {
     const o = idx * GLYPH_STRIDE;

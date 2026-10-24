@@ -68,6 +68,7 @@ export function useHandwritingPages(
   engine: HandwritingEngine | null,
   doc: AssignmentDoc,
   photo: HTMLImageElement | null,
+  images: Record<string, HTMLImageElement>,
   customFonts: HandwritingFont[],
   previewScale: number,
   getVisiblePages?: () => number[],
@@ -80,8 +81,8 @@ export function useHandwritingPages(
   const visibleRef = useRef(getVisiblePages);
   visibleRef.current = getVisiblePages;
 
-  const latestRef = useRef({ engine, doc, photo, customFonts, previewScale, activeGuide: activeGuide ?? null });
-  latestRef.current = { engine, doc, photo, customFonts, previewScale, activeGuide: activeGuide ?? null };
+  const latestRef = useRef({ engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null });
+  latestRef.current = { engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null };
 
   const liveRafRef = useRef(0);
   const prevTextRef = useRef(doc.text);
@@ -146,6 +147,8 @@ export function useHandwritingPages(
             fontA: fA,
             fontB: fB,
             photo: cur.photo,
+            pagePapers: cur.doc.pagePapers,
+            images: cur.images,
           };
 
           const base = [
@@ -223,6 +226,8 @@ export function useHandwritingPages(
           fontA: fA,
           fontB: fB,
           photo,
+          pagePapers: doc.pagePapers,
+          images,
         };
 
         const base = [
@@ -292,7 +297,7 @@ export function useHandwritingPages(
       clearTimeout(timer);
       clearTimeout(busyTimer);
     };
-  }, [engine, doc, photo, customFonts, previewScale, activeGuide]);
+  }, [engine, doc, photo, images, customFonts, previewScale, activeGuide]);
 
   useEffect(() => {
     return () => {

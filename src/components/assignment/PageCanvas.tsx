@@ -12,6 +12,8 @@ interface Props {
   diagrams: Diagram[];
   selectedDiagram: string | null;
   hasOverride: boolean;
+  /** Name of this page's own paper when it differs from the document paper. */
+  paperLabel?: string | null;
   active: boolean;
   pageNumberBox?: PageNumberBox | null;
   pageNumberOffsetX?: number;
@@ -22,7 +24,7 @@ interface Props {
   onSelectDiagram: (id: string | null) => void;
   onChangeDiagram: (id: string, patch: Partial<Diagram>) => void;
   onDeleteDiagram: (id: string) => void;
-  onAddDiagram: () => void;
+  onChangePaper: () => void;
   onCustomize: () => void;
   onDownload: () => void;
 }
@@ -132,10 +134,11 @@ export function PageCanvas(p: Props) {
         <span className="am-page-num">
           Page {p.index + 1}
           <small> / {p.pageCount}</small>
-          {p.hasOverride && <span className="am-chip">Custom layout</span>}
+          {p.paperLabel && <span className="am-chip">{p.paperLabel}</span>}
+          {p.hasOverride && !p.paperLabel && <span className="am-chip">Custom layout</span>}
         </span>
         <div className="am-page-actions">
-          <button type="button" className="icon-button" onClick={p.onAddDiagram} aria-label={`Add diagram to page ${p.index + 1}`} title="Add diagram to this page">
+          <button type="button" className="icon-button" onClick={p.onChangePaper} aria-label={`Change paper of page ${p.index + 1}`} title="Change this page's paper">
             <ImagePlus size={15} />
           </button>
           <button type="button" className="icon-button" onClick={p.onCustomize} aria-label={`Customize layout of page ${p.index + 1}`} title="Customize this page's layout">
