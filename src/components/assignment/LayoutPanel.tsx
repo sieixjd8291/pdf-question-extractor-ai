@@ -1,4 +1,5 @@
 import { DEFAULT_LAYOUT, PAGE_SIZES, type ActiveGuide, type AssignmentSettings, type PageLayout, type PageSizeId } from '../../lib/handwriting/catalog';
+import { Ban, Dices } from 'lucide-react';
 import { Section, Segmented, SliderField, Toggle } from './controls';
 
 export type RulingStatus = 'detected' | 'none' | 'template' | null;
@@ -87,6 +88,9 @@ export function LayoutPanel({
   onSettings,
   onClearOverrides,
   onActiveGuide,
+  pageLookCount,
+  onRerollAllLooks,
+  onAllNoVariation,
 }: {
   settings: AssignmentSettings;
   overrideCount: number;
@@ -94,7 +98,11 @@ export function LayoutPanel({
   onSettings: (p: Partial<AssignmentSettings>) => void;
   onClearOverrides: () => void;
   onActiveGuide?: (guide: ActiveGuide) => void;
+  pageLookCount: number;
+  onRerollAllLooks: () => void;
+  onAllNoVariation: (off: boolean) => void;
 }) {
+  const variationOff = (s.variation ?? 'off') === 'off';
   const breaksSnap = (patch: Partial<PageLayout>) =>
     s.snapToLines && rulingStatus === 'detected' && ('lineHeight' in patch || 'marginTop' in patch || 'marginBottom' in patch);
   const setLayout = (patch: Partial<PageLayout>) =>
@@ -118,6 +126,32 @@ export function LayoutPanel({
         label="Write within the lines"
         description={snapDescription}
       />
+      <div className="am-pnum-card">
+        <div className="am-pnum-head">
+          <span className="am-label">Page looks · all pages</span>
+        </div>
+        <div className="am-chip-row">
+          <button type="button" className="am-chip-btn" onClick={onRerollAllLooks}>
+            <Dices size={13} aria-hidden="true" />
+            Re-roll all pages
+          </button>
+          <button
+            type="button"
+            className={`am-chip-btn${variationOff ? ' active' : ''}`}
+            aria-pressed={variationOff}
+            onClick={() => onAllNoVariation(!variationOff)}
+          >
+            <Ban size={13} aria-hidden="true" />
+            No variation
+          </button>
+        </div>
+        <p className="am-pnum-hint">
+          {variationOff
+            ? 'Every page is drawn flat, with no crop, tilt, colour or light changes.'
+            : `One click gives every page a fresh photo look${pageLookCount ? `, including the ${pageLookCount} ${pageLookCount === 1 ? 'page' : 'pages'} set individually` : ''}.`}
+          {(isTemplate || s.snapToLines) && ' Text stays on the ruled lines on every page.'}
+        </p>
+      </div>
       <p className="am-label">Page size</p>
       <Segmented<PageSizeId>
         label="Page size"

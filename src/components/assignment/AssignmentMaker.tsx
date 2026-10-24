@@ -9,13 +9,13 @@ import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } f
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
-import { detectRuling, layoutFromRuling, snapLayoutToRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
+import { detectRuling, fitLayoutToRuling, layoutFromRuling, layoutsDiffer, type DetectedRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
-import { TextArrangeLayer, blocksForMode, clampDelta, selectionBounds, shiftedOffsets, type MarginBox } from './TextArrangeLayer';
+import { TextArrangeLayer, blocksForMode, clampDelta, selectionBounds, shiftedOffsets, snapOffsetY, type MarginBox } from './TextArrangeLayer';
 import { TextPanel } from './TextPanel';
 import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
@@ -129,6 +129,7 @@ export function AssignmentMaker() {
     return { left: L.marginLeft, top: L.marginTop - L.lineHeight, right: size.width - L.marginRight, bottom: size.height - L.marginBottom };
   };
 
+  const lineStepRef = useRef<(page: number) => number | null>(() => null);
   const nudgeRef = useRef({ sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) });
   nudgeRef.current = { sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) };
   useEffect(() => {
@@ -148,7 +149,8 @@ export function AssignmentMaker() {
       if (!bounds) return;
       e.preventDefault();
       const step = e.shiftKey ? 10 : 2;
-      const [dx, dy] = clampDelta(bounds, box, d[0] * step, d[1] * step);
+      const lineStep = lineStepRef.current(sel.page);
+      const [dx, dy] = clampDelta(bounds, box, d[0] * step, d[1] * (lineStep ?? step), lineStep);
       if (dx || dy) moveText(shiftedOffsets(sel.ids, offsets, dx, dy));
     };
     window.addEventListener('keydown', onKey);
@@ -494,8 +496,91 @@ export function AssignmentMaker() {
 
   const setPageLayout = (page: number, layout: PageLayout) => {
     const ruling = rulingForPage(page);
-    setOverride(page, ruling ? snapLayoutToRuling(ruling, layout, size.height) : layout);
+    setOverride(page, ruling ? fitLayoutToRuling(ruling, layout, size.height) : layout);
   };
+
+  /** Line pitch a page's text must move in so it stays on the rules, or null when free. */
+  const lineStepFor = (page: number): number | null => {
+    const paper = paperForPage(s, doc.pagePapers, page);
+    if (!paper) return null;
+    if (paper.kind === 'template') return layoutForPage(s, doc.overrides, page).lineHeight;
+    return rulingForPage(page) ? layoutForPage(s, doc.overrides, page).lineHeight : null;
+  };
+  lineStepRef.current = lineStepFor;
+
+  // With "Write within the lines" on, every page — whatever paper, layout or look it
+  // has — keeps its spacing, first line and tilt on its own ruling, and any moved
+  // text sits on whole lines.
+  useEffect(() => {
+    if (!s.snapToLines && !Object.values(doc.pagePapers).some((p) => p.kind === 'template') && s.paper?.kind !== 'template') return;
+    const overridePatch: Record<number, PageLayout> = {};
+    if (s.snapToLines) {
+      for (const [key, layout] of Object.entries(doc.overrides)) {
+        const page = Number(key);
+        const ruling = rulingForPage(page);
+        if (!ruling) continue;
+        const fit = fitLayoutToRuling(ruling, layout, size.height);
+        if (layoutsDiffer(fit, layout)) overridePatch[page] = fit;
+      }
+    }
+    const offsetPatch: Record<string, TextOffset> = {};
+    for (const [id, o] of Object.entries(doc.textOffsets)) {
+      const page = Number(/^p(\d+)/.exec(id)?.[1]);
+      if (!Number.isFinite(page)) continue;
+      const step = overridePatch[page]?.lineHeight ?? lineStepFor(page);
+      if (!step) continue;
+      const y = snapOffsetY(o.y, step);
+      if (Math.abs(y - o.y) > 0.05) offsetPatch[id] = { x: o.x, y };
+    }
+    let docLayout: PageLayout | null = null;
+    if (s.snapToLines && photo && s.paper && s.paper.kind !== 'template') {
+      const sizeKey = `${size.width}x${size.height}`;
+      const cached = rulingCache.current.get(photo);
+      const ruling = cached && cached.size === sizeKey ? cached.ruling : detectRuling(photo, size.width, size.height);
+      if (!cached || cached.size !== sizeKey) rulingCache.current.set(photo, { size: sizeKey, ruling });
+      if (ruling) {
+        const fit = fitLayoutToRuling(ruling, s.layout, size.height);
+        if (layoutsDiffer(fit, s.layout)) docLayout = fit;
+      }
+    }
+    if (!Object.keys(overridePatch).length && !Object.keys(offsetPatch).length && !docLayout) return;
+    update((d) => {
+      const textOffsets = { ...d.textOffsets };
+      for (const [id, o] of Object.entries(offsetPatch)) {
+        if (Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05) delete textOffsets[id];
+        else textOffsets[id] = o;
+      }
+      return {
+        ...d,
+        settings: docLayout ? { ...d.settings, layout: docLayout } : d.settings,
+        overrides: { ...d.overrides, ...overridePatch },
+        textOffsets,
+      };
+    }, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.snapToLines, s.paper, s.layout, doc.overrides, doc.pagePapers, doc.textOffsets, photo, pageImages, size.width, size.height, update]);
+
+  const rerollAllLooks = useCallback(
+    () =>
+      update(
+        (d) => ({
+          ...d,
+          settings: {
+            ...d.settings,
+            variation: (d.settings.variation ?? 'off') === 'off' ? 'natural' : d.settings.variation,
+            variationSeed: Math.floor(Math.random() * 1_000_000_000),
+          },
+          pageVariation: {},
+        }),
+        false,
+      ),
+    [update],
+  );
+  const setAllNoVariation = useCallback(
+    (off: boolean) =>
+      update((d) => ({ ...d, settings: { ...d.settings, variation: off ? 'off' : 'natural' }, pageVariation: {} }), false),
+    [update],
+  );
 
   const setOverride = (page: number, layout: PageLayout | null) =>
     update((d) => {
@@ -654,6 +739,7 @@ export function AssignmentMaker() {
                       offsets={doc.textOffsets}
                       onSelect={(ids) => setArrangeSel({ page: i, ids })}
                       onMove={moveText}
+                  lineStep={lineStepFor(i)}
                     />
                   }
                   hasAdjust={!isNeutralAdjust(doc.pageAdjust[i])}
@@ -705,9 +791,12 @@ export function AssignmentMaker() {
             overrideCount={Object.keys(doc.overrides).length}
             rulingStatus={rulingStatus}
             onSettings={updateSettings}
-            onClearOverrides={clearOverrides}
-            onActiveGuide={setActiveGuide}
-          />
+              onClearOverrides={clearOverrides}
+              onActiveGuide={setActiveGuide}
+              pageLookCount={Object.keys(doc.pageVariation).length}
+              onRerollAllLooks={rerollAllLooks}
+              onAllNoVariation={setAllNoVariation}
+            />
           <RealismPanelM settings={s} onSettings={updateSettings} onActiveGuide={setActiveGuide} />
           <ExportPanel
             settings={s}
