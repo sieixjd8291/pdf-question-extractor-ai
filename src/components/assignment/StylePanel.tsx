@@ -15,7 +15,6 @@ export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSe
     <>
       <Section title="Text style" defaultOpen={false}>
         <SliderField label="Font size" value={s.fontSize} min={14} max={96} onChange={(v) => onSettings({ fontSize: v })} defaultValue={D.fontSize} stepper />
-        <SliderField label="Tilt / rotation" value={s.tilt} min={-12} max={12} step={0.5} onChange={(v) => onSettings({ tilt: v })} format={(v) => `${v.toFixed(1)}°`} defaultValue={0} />
         <SliderField label="Letter spacing" value={s.letterSpacing} min={-6} max={16} step={0.5} onChange={(v) => onSettings({ letterSpacing: v })} format={(v) => `${v}px`} defaultValue={0} />
         <SliderField label="Word spacing" value={s.wordSpacing} min={-12} max={48} onChange={(v) => onSettings({ wordSpacing: v })} format={(v) => `${v}px`} defaultValue={0} />
         <SliderField label="Ink opacity" value={s.inkOpacity} min={0.3} max={1} step={0.02} onChange={(v) => onSettings({ inkOpacity: v })} format={(v) => v.toFixed(2)} defaultValue={D.inkOpacity} />
@@ -46,6 +45,7 @@ export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSe
         <SliderField label="Character variance" value={s.charVariance} min={0} max={1} step={0.05} onChange={(v) => onSettings({ charVariance: v })} format={pct} defaultValue={D.charVariance} />
         <SliderField label="Size variance" value={s.sizeVariance} min={0} max={1} step={0.05} onChange={(v) => onSettings({ sizeVariance: v })} format={pct} defaultValue={D.sizeVariance} />
         <SliderField label="Baseline wobble" value={s.baselineWobble} min={0} max={6} step={0.2} onChange={(v) => onSettings({ baselineWobble: v })} format={(v) => `${v.toFixed(1)}px`} defaultValue={D.baselineWobble} />
+        <SliderField label="Tilt / rotation" value={s.tilt} min={-12} max={12} step={0.5} onChange={(v) => onSettings({ tilt: v })} format={(v) => `${v.toFixed(1)}°`} defaultValue={0} />
         <SliderField label="Line slope" value={s.lineSlope} min={0} max={2} step={0.05} onChange={(v) => onSettings({ lineSlope: v })} format={(v) => `±${v.toFixed(2)}°`} defaultValue={D.lineSlope} />
         <SliderField label="Pen pressure variance" value={s.inkVariance} min={0} max={1} step={0.05} onChange={(v) => onSettings({ inkVariance: v })} format={pct} defaultValue={D.inkVariance} />
         <SliderField label="Margin drift" value={s.marginJitter} min={0} max={30} onChange={(v) => onSettings({ marginJitter: v })} format={(v) => `${v}px`} defaultValue={D.marginJitter} />

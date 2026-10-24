@@ -169,6 +169,8 @@ export interface PageLayout {
   marginTop: number;
   marginBottom: number;
   lineHeight: number;
+  /** Slant of the printed ruling in degrees (positive = lines descend to the right); text follows it. */
+  angle?: number;
 }
 
 /** `photoId` identifies a per-page uploaded photo; without it, `photo` is the document-wide upload. */
