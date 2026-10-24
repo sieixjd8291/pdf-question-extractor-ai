@@ -4,7 +4,7 @@ import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
-import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, samePaper, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
+import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
@@ -23,7 +23,7 @@ import { PenPanel } from './PenPanel';
 import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
-import { ExportMenu, HelpDialog, PageLayoutDialog, PaperDialog } from './dialogs';
+import { ExportMenu, HelpDialog, PageAdjustDialog, PageLayoutDialog, PaperDialog } from './dialogs';
 import { MobileTabs, type MobileView } from './MobileTabs';
 
 // Panels only depend on settings + stable callbacks, so typing or page
@@ -77,6 +77,7 @@ export function AssignmentMaker() {
   const [activePage, setActivePage] = useState(0);
   const [selectedDiagram, setSelectedDiagram] = useState<string | null>(null);
   const [layoutDialogPage, setLayoutDialogPage] = useState<number | null>(null);
+  const [adjustDialogPage, setAdjustDialogPage] = useState<number | null>(null);
   const [activeGuide, setActiveGuide] = useState<ActiveGuide>(null);
   const [paperDialog, setPaperDialog] = useState(false);
   const [pagePaperDialog, setPagePaperDialog] = useState<number | null>(null);
@@ -425,6 +426,14 @@ export function AssignmentMaker() {
       return { ...d, overrides };
     });
 
+  const setPageAdjust = (page: number, adjust: ImageAdjust | null) =>
+    update((d) => {
+      const pageAdjust = { ...d.pageAdjust };
+      if (adjust && !isNeutralAdjust(adjust)) pageAdjust[page] = adjust;
+      else delete pageAdjust[page];
+      return { ...d, pageAdjust };
+    }, Boolean(adjust));
+
   const paperName = s.paper?.kind === 'photo'
     ? 'Your photo'
     : s.paper?.kind === 'stock'
@@ -519,6 +528,11 @@ export function AssignmentMaker() {
                     setPagePaperDialog(i);
                   }}
                   onCustomize={() => setLayoutDialogPage(i)}
+                  hasAdjust={!isNeutralAdjust(doc.pageAdjust[i])}
+                  onAdjust={() => {
+                    setActivePage(i);
+                    setAdjustDialogPage(i);
+                  }}
                   onDownload={() => {
                     setActivePage(i);
                     if (!pages.input) return;
@@ -591,6 +605,19 @@ export function AssignmentMaker() {
           onClose={() => {
             setActiveGuide(null);
             setLayoutDialogPage(null);
+          }}
+          onActiveGuide={setActiveGuide}
+        />
+      )}
+      {adjustDialogPage !== null && (
+        <PageAdjustDialog
+          page={adjustDialogPage}
+          value={doc.pageAdjust[adjustDialogPage] ?? DEFAULT_ADJUST}
+          onChange={(a) => setPageAdjust(adjustDialogPage, a)}
+          onReset={() => setPageAdjust(adjustDialogPage, null)}
+          onClose={() => {
+            setActiveGuide(null);
+            setAdjustDialogPage(null);
           }}
           onActiveGuide={setActiveGuide}
         />

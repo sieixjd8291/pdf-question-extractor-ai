@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Download, FileArchive, FileImage, FileText, X } from 'lucide-react';
 import { useDialog } from '../../hooks/useDialog';
-import type { ActiveGuide, PageLayout } from '../../lib/handwriting/catalog';
+import { isNeutralAdjust, type ActiveGuide, type ImageAdjust, type PageLayout } from '../../lib/handwriting/catalog';
 import type { ExportFormat } from '../../lib/handwriting/export';
 import { LayoutFields } from './LayoutPanel';
+import { AdjustFields } from './AdjustFields';
 
 function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useDialog(onClose);
@@ -75,6 +76,62 @@ export function PageLayoutDialog({
           <footer className="am-dialog-foot">
             <button type="button" className="btn quiet" onClick={onReset} disabled={!isCustom}>
               Use global layout
+            </button>
+            <button type="button" className="btn primary" onClick={onClose}>
+              Done
+            </button>
+          </footer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function PageAdjustDialog({
+  page,
+  value,
+  onChange,
+  onReset,
+  onClose,
+  onActiveGuide,
+}: {
+  page: number;
+  value: ImageAdjust;
+  onChange: (a: ImageAdjust) => void;
+  onReset: () => void;
+  onClose: () => void;
+  onActiveGuide?: (guide: ActiveGuide) => void;
+}) {
+  const ref = useDialog(onClose);
+  return (
+    <div
+      className="am-floating-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={ref}
+        className="modal-panel sm am-dialog am-floating-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="am-dialog-title"
+        tabIndex={-1}
+      >
+        <header className="am-dialog-head">
+          <h2 id="am-dialog-title">Page {page + 1} adjustments</h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="am-dialog-body">
+          <p className="am-help">
+            Changes apply only to page {page + 1}, stacked on top of the Realism adjustments for all pages.
+          </p>
+          <AdjustFields value={value} onChange={(patch) => onChange({ ...value, ...patch })} onActiveGuide={onActiveGuide} />
+          <footer className="am-dialog-foot">
+            <button type="button" className="btn quiet" onClick={onReset} disabled={isNeutralAdjust(value)}>
+              Reset page
             </button>
             <button type="button" className="btn primary" onClick={onClose}>
               Done

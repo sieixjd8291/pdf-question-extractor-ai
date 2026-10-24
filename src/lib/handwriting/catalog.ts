@@ -160,7 +160,35 @@ export type ActiveGuide =
   | 'paragraphIndent'
   | 'pageNumber'
   | 'photoStrength'
+  | 'adjust'
   | null;
+
+/** Manual image adjustments, each from -100 to 100 with 0 meaning unchanged. */
+export interface ImageAdjust {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  sharpness: number;
+}
+
+export const DEFAULT_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0, sharpness: 0 };
+
+export function isNeutralAdjust(a: ImageAdjust | null | undefined): boolean {
+  return !a || (a.brightness === 0 && a.contrast === 0 && a.saturation === 0 && a.sharpness === 0);
+}
+
+/** Page adjustments stack on top of the document-wide ones. */
+export function combineAdjust(base: ImageAdjust | undefined, page: ImageAdjust | undefined): ImageAdjust {
+  const b = base ?? DEFAULT_ADJUST;
+  if (!page) return b;
+  const c = (v: number) => Math.max(-100, Math.min(100, v));
+  return {
+    brightness: c(b.brightness + page.brightness),
+    contrast: c(b.contrast + page.contrast),
+    saturation: c(b.saturation + page.saturation),
+    sharpness: c(b.sharpness + page.sharpness),
+  };
+}
 
 export interface PageLayout {
   marginLeft: number;
@@ -282,6 +310,7 @@ export interface AssignmentSettings {
   snapToLines: boolean;
   photoFilter: boolean;
   photoStrength: number;
+  adjust: ImageAdjust;
   seed: number;
   exportScale: 1 | 2 | 3;
   exportQuality: number;
@@ -340,6 +369,7 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   snapToLines: true,
   photoFilter: false,
   photoStrength: 0.6,
+  adjust: DEFAULT_ADJUST,
   seed: 1337,
   exportScale: 2,
   exportQuality: 0.92,
@@ -365,6 +395,8 @@ export interface AssignmentDoc {
   overrides: Record<number, PageLayout>;
   /** Paper chosen for an individual page; pages without an entry use `settings.paper`. */
   pagePapers: Record<number, PaperChoice>;
+  /** Extra image adjustments for an individual page, stacked on `settings.adjust`. */
+  pageAdjust: Record<number, ImageAdjust>;
   diagrams: Diagram[];
 }
 

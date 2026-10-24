@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import { Download, ImagePlus, SlidersHorizontal, Trash2, Droplet } from 'lucide-react';
+import { Download, ImagePlus, SlidersHorizontal, SunMedium, Trash2, Droplet } from 'lucide-react';
 import type { ActiveGuide, Diagram } from '../../lib/handwriting/catalog';
 import type { PageNumberBox } from '../../lib/handwriting/render';
 
@@ -27,6 +27,9 @@ interface Props {
   onChangePaper: () => void;
   onCustomize: () => void;
   onDownload: () => void;
+  /** True when this page has its own image adjustments. */
+  hasAdjust?: boolean;
+  onAdjust: () => void;
 }
 
 export function PageCanvas(p: Props) {
@@ -136,8 +139,19 @@ export function PageCanvas(p: Props) {
           <small> / {p.pageCount}</small>
           {p.paperLabel && <span className="am-chip">{p.paperLabel}</span>}
           {p.hasOverride && !p.paperLabel && <span className="am-chip">Custom layout</span>}
+          {p.hasAdjust && <span className="am-chip">Adjusted</span>}
         </span>
         <div className="am-page-actions">
+          <button
+            type="button"
+            className={`icon-button${p.hasAdjust ? ' active' : ''}`}
+            onClick={p.onAdjust}
+            aria-label={`Adjust brightness, contrast, saturation and sharpness of page ${p.index + 1}`}
+            aria-pressed={p.hasAdjust}
+            title="Adjust this page's image"
+          >
+            <SunMedium size={15} />
+          </button>
           <button type="button" className="icon-button" onClick={p.onChangePaper} aria-label={`Change paper of page ${p.index + 1}`} title="Change this page's paper">
             <ImagePlus size={15} />
           </button>

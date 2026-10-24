@@ -2,15 +2,19 @@ import type { HandwritingEngine } from './engine';
 import {
   PAGE_SIZES,
   PENS,
+  combineAdjust,
   inkColor,
+  isNeutralAdjust,
   type ActiveGuide,
   type AssignmentSettings,
   type Diagram,
   type HandwritingFont,
+  type ImageAdjust,
   type PageLayout,
   type PaperChoice,
   samePaper,
 } from './catalog';
+import { applyImageAdjust } from './adjust';
 import { GLYPH_FLAG, GLYPH_STRIDE, layoutForPage, type LayoutResult } from './compose';
 
 export interface RenderInput {
@@ -25,6 +29,7 @@ export interface RenderInput {
   pagePapers: Record<number, PaperChoice>;
   /** Per-page paper images keyed by `pageImageKey`. */
   images: Record<string, HTMLImageElement>;
+  pageAdjust?: Record<number, ImageAdjust>;
 }
 
 export function pageImageKey(paper: PaperChoice): string | null {
@@ -649,6 +654,8 @@ export function pageSignature(input: RenderInput, page: number, base: string): s
   }
   const ov = overrides[page];
   if (ov) h = mixString(h, JSON.stringify(ov));
+  const pageAdj = input.pageAdjust?.[page];
+  if (pageAdj) h = mixString(h, JSON.stringify(pageAdj));
   const own = input.pagePapers?.[page];
   if (own) {
     const img = resolvePaper(input, page).photo;
@@ -725,6 +732,12 @@ export function renderPage(input: RenderInput, page: number, opts: RenderOptions
   if (s.photoFilter && s.photoStrength > 0 && (!opts.fast || opts.activeGuide === 'photoStrength')) {
     const img = ctx.getImageData(0, 0, out.width, out.height);
     input.engine.photoFilter(img, s.photoStrength, s.seed + page * 31);
+    ctx.putImageData(img, 0, 0);
+  }
+  const adj = combineAdjust(s.adjust, input.pageAdjust?.[page]);
+  if (!isNeutralAdjust(adj)) {
+    const img = ctx.getImageData(0, 0, out.width, out.height);
+    applyImageAdjust(img, adj, !opts.fast || opts.activeGuide === 'adjust');
     ctx.putImageData(img, 0, 0);
   }
 
