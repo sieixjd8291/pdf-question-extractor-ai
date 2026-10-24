@@ -1,11 +1,14 @@
 import { RotateCcw } from 'lucide-react';
-import type {
-  ActiveGuide,
-  AssignmentSettings,
-  PageNumberFormat,
-  PageNumberPosition,
+import {
+  DEFAULT_ADJUST,
+  isNeutralAdjust,
+  type ActiveGuide,
+  type AssignmentSettings,
+  type PageNumberFormat,
+  type PageNumberPosition,
 } from '../../lib/handwriting/catalog';
 import { Section, SliderField, Toggle } from './controls';
+import { AdjustFields } from './AdjustFields';
 
 const POSITIONS: Array<{ id: PageNumberPosition; label: string; short: string }> = [
   { id: 'top-left', label: 'Top Left', short: 'Top L' },
@@ -39,6 +42,7 @@ export function RealismPanel({
   const ox = s.pageNumberOffsetX ?? 0;
   const oy = s.pageNumberOffsetY ?? 0;
   const hasOffset = ox !== 0 || oy !== 0;
+  const adjust = s.adjust ?? DEFAULT_ADJUST;
   const isSpiralPhoto = s.paper?.kind === 'stock' && s.paper.id === 'spiral-notebook';
 
   const pulsePageNumGuide = () => {
@@ -68,6 +72,27 @@ export function RealismPanel({
           defaultValue={0.6}
         />
       )}
+      <div className="am-pnum-card">
+        <div className="am-pnum-head">
+          <span className="am-label">Image adjustments</span>
+          {!isNeutralAdjust(adjust) && (
+            <button
+              type="button"
+              className="am-pnum-reset"
+              onClick={() => onSettings({ adjust: DEFAULT_ADJUST })}
+              title="Reset brightness, contrast, saturation and sharpness"
+            >
+              <RotateCcw size={11} />Reset
+            </button>
+          )}
+        </div>
+        <AdjustFields
+          value={adjust}
+          onChange={(patch) => onSettings({ adjust: { ...adjust, ...patch } })}
+          onActiveGuide={onActiveGuide}
+        />
+        <p className="am-pnum-hint">Applies to every page. Use the adjust button above a page to fine-tune just that page.</p>
+      </div>
       <Toggle
         checked={s.underlineHeadings}
         onChange={(v) => onSettings({ underlineHeadings: v })}

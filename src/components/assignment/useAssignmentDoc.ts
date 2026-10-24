@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings, type PaperChoice } from '../../lib/handwriting/catalog';
+import { DEFAULT_ADJUST, DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings, type ImageAdjust, type PaperChoice } from '../../lib/handwriting/catalog';
 
 const STORAGE_KEY = 'assignment-maker-draft-v1';
 const COALESCE_MS = 600;
@@ -15,8 +15,17 @@ function restorePagePapers(saved: unknown): Record<number, PaperChoice> {
   return out;
 }
 
+function restorePageAdjust(saved: unknown): Record<number, ImageAdjust> {
+  if (!saved || typeof saved !== 'object') return {};
+  const out: Record<number, ImageAdjust> = {};
+  for (const [k, v] of Object.entries(saved as Record<string, Partial<ImageAdjust>>)) {
+    if (v && typeof v === 'object') out[Number(k)] = { ...DEFAULT_ADJUST, ...v };
+  }
+  return out;
+}
+
 function loadDraft(): AssignmentDoc {
-  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, pagePapers: {}, diagrams: [] };
+  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return fresh;
@@ -25,6 +34,7 @@ function loadDraft(): AssignmentDoc {
       ...saved.settings,
       mistakeKinds: { ...DEFAULT_SETTINGS.mistakeKinds, ...saved.settings?.mistakeKinds, crossOut: false },
       layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout },
+      adjust: { ...DEFAULT_ADJUST, ...saved.settings?.adjust },
     };
     // Photos are not persisted, so a photo paper cannot be restored.
     if (settings.paper?.kind === 'photo') settings.paper = null;
@@ -33,6 +43,7 @@ function loadDraft(): AssignmentDoc {
       settings,
       overrides: saved.overrides && typeof saved.overrides === 'object' ? saved.overrides : {},
       pagePapers: restorePagePapers(saved.pagePapers),
+      pageAdjust: restorePageAdjust(saved.pageAdjust),
       diagrams: [],
     };
   } catch {
@@ -88,19 +99,19 @@ export function useAssignmentDoc() {
   }, []);
 
   const reset = useCallback(() => {
-    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, pagePapers: {}, diagrams: [] }, false);
+    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [] }, false);
   }, [commit]);
 
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers, pageAdjust: doc.pageAdjust }));
       } catch {
         // Storage full or blocked: the draft simply isn't kept.
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers]);
+  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers, doc.pageAdjust]);
 
   return {
     doc,
