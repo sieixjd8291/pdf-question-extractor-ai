@@ -46,27 +46,48 @@ export function detectRuling(img: HTMLImageElement, pageW: number, pageH: number
   // Row darkness over the writing area (skips spiral binding and margin).
   const x0 = Math.round(cw * 0.32);
   const x1 = Math.round(cw * 0.95);
-  const lum = new Float32Array(ch);
-  for (let y = 0; y < ch; y++) {
-    let sum = 0;
-    for (let x = x0; x < x1; x++) {
-      const i = (y * cw + x) * 4;
-      sum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-    }
-    lum[y] = sum / (x1 - x0);
-  }
+  const xc = (x0 + x1) / 2;
   const win = 6;
-  const profile = new Float32Array(ch);
-  for (let y = 0; y < ch; y++) {
-    let s = 0;
-    let n = 0;
-    for (let k = -win; k <= win; k++) {
-      const yy = y + k;
-      if (yy < 0 || yy >= ch) continue;
-      s += lum[yy];
-      n++;
+  // Photographed paper is rarely level, so try small shears and keep the one with the crispest rows.
+  const buildProfile = (slope: number) => {
+    const lum = new Float32Array(ch);
+    for (let y = 0; y < ch; y++) {
+      let sum = 0;
+      for (let x = x0; x < x1; x++) {
+        const yy = Math.round(y + slope * (x - xc));
+        if (yy < 0 || yy >= ch) {
+          sum += 255;
+          continue;
+        }
+        const i = (yy * cw + x) * 4;
+        sum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      }
+      lum[y] = sum / (x1 - x0);
     }
-    profile[y] = Math.max(0, s / n - lum[y]);
+    const prof = new Float32Array(ch);
+    let energy = 0;
+    for (let y = 0; y < ch; y++) {
+      let s = 0;
+      let n = 0;
+      for (let k = -win; k <= win; k++) {
+        const yy = y + k;
+        if (yy < 0 || yy >= ch) continue;
+        s += lum[yy];
+        n++;
+      }
+      prof[y] = Math.max(0, s / n - lum[y]);
+      energy += prof[y] * prof[y];
+    }
+    return { prof, energy };
+  };
+  let profile = buildProfile(0).prof;
+  let bestEnergy = -1;
+  for (let slope = -0.04; slope <= 0.0401; slope += 0.005) {
+    const cand = buildProfile(slope);
+    if (cand.energy > bestEnergy) {
+      bestEnergy = cand.energy;
+      profile = cand.prof;
+    }
   }
 
   // Coarse period from autocorrelation; prefer the smallest strong lag to avoid harmonics.
