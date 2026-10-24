@@ -12,8 +12,7 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSettings; onSettings: (p: Partial<AssignmentSettings>) => void }) {
   return (
-    <>
-      <Section title="Text style" defaultOpen={false}>
+    <Section title="Text style" defaultOpen={false}>
         <SliderField label="Font size" value={s.fontSize} min={14} max={96} onChange={(v) => onSettings({ fontSize: v })} defaultValue={D.fontSize} stepper />
         <SliderField label="Letter spacing" value={s.letterSpacing} min={-6} max={16} step={0.5} onChange={(v) => onSettings({ letterSpacing: v })} format={(v) => `${v}px`} defaultValue={0} />
         <SliderField label="Word spacing" value={s.wordSpacing} min={-12} max={48} onChange={(v) => onSettings({ wordSpacing: v })} format={(v) => `${v}px`} defaultValue={0} />
@@ -30,8 +29,7 @@ export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSe
             { value: 'justify', label: <AlignJustify size={15} aria-label="Justify" />, title: 'Justify' },
           ]}
         />
-      </Section>
-      <Section title="Natural variation" defaultOpen={false}>
+        <p className="am-label">Natural variation</p>
         <div className="am-chip-row">
           {NATURAL_PRESETS.map((p) => (
             <button key={p.id} type="button" className={`am-chip-btn${s.charVariance === p.patch.charVariance ? ' active' : ''}`} onClick={() => onSettings(p.patch)}>
@@ -49,7 +47,6 @@ export function StylePanel({ settings: s, onSettings }: { settings: AssignmentSe
         <SliderField label="Line slope" value={s.lineSlope} min={0} max={2} step={0.05} onChange={(v) => onSettings({ lineSlope: v })} format={(v) => `±${v.toFixed(2)}°`} defaultValue={D.lineSlope} />
         <SliderField label="Pen pressure variance" value={s.inkVariance} min={0} max={1} step={0.05} onChange={(v) => onSettings({ inkVariance: v })} format={pct} defaultValue={D.inkVariance} />
         <SliderField label="Margin drift" value={s.marginJitter} min={0} max={30} onChange={(v) => onSettings({ marginJitter: v })} format={(v) => `${v}px`} defaultValue={D.marginJitter} />
-      </Section>
-    </>
+    </Section>
   );
 }

@@ -209,3 +209,27 @@ export function layoutFromRuling(ruling: DetectedRuling, current: PageLayout, pa
     angle: ruling.angle,
   };
 }
+
+/**
+ * Keeps a user-edited layout on the printed lines: margins stay where the user
+ * put them, while the first line, bottom edge and line spacing snap to the ruling.
+ */
+export function snapLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
+  const step = ruling.lineHeight;
+  const lineHeight = step * Math.max(1, Math.round(desired.lineHeight / step));
+  const firstAtMargin = ruling.firstLine + ruling.slope * (desired.marginLeft - ruling.centerX);
+  const lastAtMargin = ruling.lastLine + ruling.slope * (desired.marginLeft - ruling.centerX);
+  const maxSteps = Math.max(0, Math.floor((lastAtMargin - firstAtMargin) / step));
+  const topSteps = Math.min(maxSteps, Math.max(0, Math.round((desired.marginTop - firstAtMargin) / step)));
+  const marginTop = firstAtMargin + topSteps * step;
+  const desiredLast = pageH - desired.marginBottom;
+  const lastSteps = Math.min(maxSteps, Math.max(topSteps, Math.round((desiredLast - firstAtMargin) / step)));
+  const lastLine = firstAtMargin + lastSteps * step;
+  return {
+    ...desired,
+    marginTop: Math.round(marginTop * 10) / 10,
+    marginBottom: Math.max(10, Math.floor(pageH - lastLine - 1)),
+    lineHeight,
+    angle: ruling.angle,
+  };
+}
