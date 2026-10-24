@@ -8,7 +8,7 @@ import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, 
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
-import { detectRuling, layoutFromRuling } from '../../lib/handwriting/detectLines';
+import { detectRuling, layoutFromRuling, snapLayoutToRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
@@ -418,6 +418,28 @@ export function AssignmentMaker() {
     }
   };
 
+  const rulingCache = useRef(new WeakMap<HTMLImageElement, { size: string; ruling: DetectedRuling | null }>());
+  const rulingForPage = (page: number): DetectedRuling | null => {
+    if (!s.snapToLines) return null;
+    const paper = paperForPage(s, doc.pagePapers, page);
+    if (!paper || paper.kind === 'template') return null;
+    const own = doc.pagePapers[page];
+    const imgKey = own && !samePaper(own, s.paper) ? pageImageKey(own) : null;
+    const img = own && !samePaper(own, s.paper) ? (imgKey ? pageImages[imgKey] : null) : photo;
+    if (!img) return null;
+    const sizeKey = `${size.width}x${size.height}`;
+    const cached = rulingCache.current.get(img);
+    if (cached && cached.size === sizeKey) return cached.ruling;
+    const ruling = detectRuling(img, size.width, size.height);
+    rulingCache.current.set(img, { size: sizeKey, ruling });
+    return ruling;
+  };
+
+  const setPageLayout = (page: number, layout: PageLayout) => {
+    const ruling = rulingForPage(page);
+    setOverride(page, ruling ? snapLayoutToRuling(ruling, layout, size.height) : layout);
+  };
+
   const setOverride = (page: number, layout: PageLayout | null) =>
     update((d) => {
       const overrides = { ...d.overrides };
@@ -600,7 +622,8 @@ export function AssignmentMaker() {
           page={layoutDialogPage}
           layout={layoutForPage(s, doc.overrides, layoutDialogPage)}
           isCustom={Boolean(doc.overrides[layoutDialogPage])}
-          onChange={(l) => setOverride(layoutDialogPage, l)}
+          snapped={rulingForPage(layoutDialogPage) !== null}
+          onChange={(l) => setPageLayout(layoutDialogPage, l)}
           onReset={() => setOverride(layoutDialogPage, null)}
           onClose={() => {
             setActiveGuide(null);

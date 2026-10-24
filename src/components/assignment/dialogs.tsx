@@ -29,6 +29,7 @@ export function PageLayoutDialog({
   page,
   layout,
   isCustom,
+  snapped,
   onChange,
   onReset,
   onClose,
@@ -37,6 +38,7 @@ export function PageLayoutDialog({
   page: number;
   layout: PageLayout;
   isCustom: boolean;
+  snapped?: boolean;
   onChange: (l: PageLayout) => void;
   onReset: () => void;
   onClose: () => void;
@@ -68,6 +70,11 @@ export function PageLayoutDialog({
           <p className="am-help">
             Changes apply only to page {page + 1}. Drag any slider to see the live preview on the page.
           </p>
+          {snapped && (
+            <p className="am-help">
+              Write within the lines is on — text stays snapped to this page&apos;s ruled lines as you adjust.
+            </p>
+          )}
           <LayoutFields
             layout={layout}
             onChange={(patch) => onChange({ ...layout, ...patch })}
