@@ -3,6 +3,7 @@ import type { HandwritingEngine } from '../../lib/handwriting/engine';
 import { findFont, type ActiveGuide, type AssignmentDoc, type HandwritingFont } from '../../lib/handwriting/catalog';
 import { loadFont, runLayout, segment, type Segmented } from '../../lib/handwriting/compose';
 import { pageSignature, renderPage, warmPaperBase, type RenderInput } from '../../lib/handwriting/render';
+import { normalizeAssignmentText, stripInertMarkers } from '../../lib/handwriting/smartFormat';
 
 export interface PagesState {
   canvases: HTMLCanvasElement[];
@@ -90,7 +91,7 @@ export function useHandwritingPages(
     if (prepCache.current && prepCache.current.key === key) {
       return prepCache.current;
     }
-    const prepared = eng.prepareText(text, { latex, markdown });
+    const prepared = stripInertMarkers(eng.prepareText(normalizeAssignmentText(text, { latex, markdown }), { latex, markdown }));
     const sample = sampleChars(prepared + 'PageofPg.-/() 0123456789');
     const seg = segment(prepared);
     const entry: PrepCache = { key, seg, sample };
