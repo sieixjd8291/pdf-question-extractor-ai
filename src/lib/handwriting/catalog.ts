@@ -171,7 +171,16 @@ export interface PageLayout {
   lineHeight: number;
 }
 
-export type PaperChoice = { kind: 'template'; template: number } | { kind: 'photo' } | { kind: 'stock'; id: string };
+/** `photoId` identifies a per-page uploaded photo; without it, `photo` is the document-wide upload. */
+export type PaperChoice = { kind: 'template'; template: number } | { kind: 'photo'; photoId?: string } | { kind: 'stock'; id: string };
+
+export function samePaper(a: PaperChoice | null | undefined, b: PaperChoice | null | undefined): boolean {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'template' && b.kind === 'template') return a.template === b.template;
+  if (a.kind === 'stock' && b.kind === 'stock') return a.id === b.id;
+  if (a.kind === 'photo' && b.kind === 'photo') return a.photoId === b.photoId;
+  return false;
+}
 
 export interface StockPaper {
   id: string;
@@ -352,6 +361,8 @@ export interface AssignmentDoc {
   text: string;
   settings: AssignmentSettings;
   overrides: Record<number, PageLayout>;
+  /** Paper chosen for an individual page; pages without an entry use `settings.paper`. */
+  pagePapers: Record<number, PaperChoice>;
   diagrams: Diagram[];
 }
 

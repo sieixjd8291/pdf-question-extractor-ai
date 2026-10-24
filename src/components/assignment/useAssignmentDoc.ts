@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings } from '../../lib/handwriting/catalog';
+import { DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings, type PaperChoice } from '../../lib/handwriting/catalog';
 
 const STORAGE_KEY = 'assignment-maker-draft-v1';
 const COALESCE_MS = 600;
 const HISTORY_LIMIT = 120;
 
+function restorePagePapers(saved: unknown): Record<number, PaperChoice> {
+  if (!saved || typeof saved !== 'object') return {};
+  const out: Record<number, PaperChoice> = {};
+  for (const [k, v] of Object.entries(saved as Record<string, PaperChoice>)) {
+    // Uploaded photos are not persisted, so those pages fall back to the document paper.
+    if (v && (v.kind === 'template' || v.kind === 'stock')) out[Number(k)] = v;
+  }
+  return out;
+}
+
 function loadDraft(): AssignmentDoc {
-  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, diagrams: [] };
+  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, pagePapers: {}, diagrams: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return fresh;
@@ -22,6 +32,7 @@ function loadDraft(): AssignmentDoc {
       text: typeof saved.text === 'string' ? saved.text : SAMPLE_TEXT,
       settings,
       overrides: saved.overrides && typeof saved.overrides === 'object' ? saved.overrides : {},
+      pagePapers: restorePagePapers(saved.pagePapers),
       diagrams: [],
     };
   } catch {
@@ -77,19 +88,19 @@ export function useAssignmentDoc() {
   }, []);
 
   const reset = useCallback(() => {
-    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, diagrams: [] }, false);
+    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, pagePapers: {}, diagrams: [] }, false);
   }, [commit]);
 
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers }));
       } catch {
         // Storage full or blocked: the draft simply isn't kept.
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [doc.text, doc.settings, doc.overrides]);
+  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers]);
 
   return {
     doc,

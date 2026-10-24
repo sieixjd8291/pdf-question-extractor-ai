@@ -86,8 +86,8 @@ export function PageLayoutDialog({
   );
 }
 
-export function PaperDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
-  return <Dialog title="Choose paper" onClose={onClose} wide>{children}</Dialog>;
+export function PaperDialog({ onClose, children, title = 'Choose paper' }: { onClose: () => void; children: ReactNode; title?: string }) {
+  return <Dialog title={title} onClose={onClose} wide>{children}</Dialog>;
 }
 
 export function HelpDialog({ onClose }: { onClose: () => void }) {
@@ -95,7 +95,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Paper', 'Upload a photo of your notebook or pick a template. Templates redraw their rules from your line height, so text always sits on the lines.'],
     ['Photo calibration', 'For photo paper, turn on alignment guides and match First line, Line height and margins to the lines in your photo.'],
     ['Math', 'Write LaTeX such as \\frac{a}{b}, \\sqrt{x}, x^2, H_2O, \\alpha or \\times — it is converted into handwritten maths.'],
-    ['Pages', 'Long text splits into pages automatically. Insert \\newpage to force a break; customize any single page from its toolbar.'],
+    ['Pages', 'Long text splits into pages automatically. Insert \\newpage to force a break; change the paper or layout of any single page from its toolbar.'],
     ['Headings', 'Start a line with # to write it larger and underlined. Pasted ChatGPT formatting is cleaned automatically.'],
     ['Realism', 'Auto mistakes add believable typos that are crossed out and rewritten. Page numbers can be placed in any corner or dragged to fit printed notebook boxes.'],
     ['Diagrams', 'Add Diagram places an image on the active page. Drag to move, use the corner to resize, and Ink to redraw it in pen colour.'],

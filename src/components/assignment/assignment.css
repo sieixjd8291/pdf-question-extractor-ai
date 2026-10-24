@@ -654,6 +654,11 @@
 .am-dialog-head h2 { font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; }
 .am-dialog-body { display: flex; flex-direction: column; gap: 14px; padding: 18px; overflow-y: auto; }
 .am-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.am-page-paper-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--muted); }
+.am-page-paper-bar p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--secondary); }
+.am-page-paper-bar strong { color: var(--ink); font-weight: 600; }
+.am-page-paper-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.am-page-paper-actions .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; font-size: 12.5px; }
 .am-help-list { display: flex; flex-direction: column; gap: 12px; margin: 0; }
 .am-help-list dt { font-size: 13px; font-weight: 600; }
 .am-help-list dd { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--secondary); }

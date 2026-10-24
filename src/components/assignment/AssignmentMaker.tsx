@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileImage, Loader2 } from 'lucide-react';
+import { FileImage, Loader2, RotateCcw, Shapes } from 'lucide-react';
 import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
-import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type PageLayout } from '../../lib/handwriting/catalog';
+import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, samePaper, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
-import { computePageNumberPlacement, formatPageNumber, loadImage, tintDiagram } from '../../lib/handwriting/render';
+import { computePageNumberPlacement, formatPageNumber, loadImage, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { detectRuling, layoutFromRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
@@ -79,6 +79,8 @@ export function AssignmentMaker() {
   const [layoutDialogPage, setLayoutDialogPage] = useState<number | null>(null);
   const [activeGuide, setActiveGuide] = useState<ActiveGuide>(null);
   const [paperDialog, setPaperDialog] = useState(false);
+  const [pagePaperDialog, setPagePaperDialog] = useState<number | null>(null);
+  const [pageImages, setPageImages] = useState<Record<string, HTMLImageElement>>({});
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
@@ -92,7 +94,7 @@ export function AssignmentMaker() {
   const pagesRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>([0]));
   const getVisiblePages = useCallback(() => [...visiblePages.current].sort((a, b) => a - b), []);
-  const pages = useHandwritingPages(engine, doc, photo, customFonts, previewScale, getVisiblePages, activeGuide);
+  const pages = useHandwritingPages(engine, doc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
 
   const movePageNumber = useCallback(
@@ -249,6 +251,70 @@ export function AssignmentMaker() {
     setPaperDialog(false);
   }, [updateSettings]);
 
+  const pageStockKey = Object.values(doc.pagePapers)
+    .flatMap((p) => (p.kind === 'stock' ? [p.id] : []))
+    .sort()
+    .join(',');
+  useEffect(() => {
+    const ids = pageStockKey ? [...new Set(pageStockKey.split(','))] : [];
+    let cancelled = false;
+    for (const id of ids) {
+      const paper = findStockPaper(id);
+      const key = `stock:${id}`;
+      if (!paper || pageImages[key]) continue;
+      loadImage(paper.src).then(
+        (img) => !cancelled && setPageImages((prev) => ({ ...prev, [key]: img })),
+        () => !cancelled && toast.error('That paper photo could not be loaded.'),
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [pageStockKey, pageImages, toast]);
+
+  const setPagePaper = useCallback(
+    (page: number, paper: PaperChoice | null, layout?: PageLayout) => {
+      update((d) => {
+        const pagePapers = { ...d.pagePapers };
+        const overrides = { ...d.overrides };
+        const previous = pagePapers[page];
+        const useDocPaper = !paper || samePaper(paper, d.settings.paper);
+        if (useDocPaper) delete pagePapers[page];
+        else pagePapers[page] = paper;
+        // A stock photo's layout follows its printed lines; drop it once the page leaves that photo.
+        if (layout && !useDocPaper) overrides[page] = layout;
+        else if (previous?.kind === 'stock' && !samePaper(previous, paper)) delete overrides[page];
+        return { ...d, pagePapers, overrides };
+      }, false);
+      setPagePaperDialog(null);
+    },
+    [update],
+  );
+
+  const pickPagePhoto = useCallback(
+    async (page: number, file: File) => {
+      try {
+        const { img } = await loadDownscaled(file, 2600);
+        const photoId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        setPageImages((prev) => ({ ...prev, [`photo:${photoId}`]: img }));
+        setPagePaper(page, { kind: 'photo', photoId });
+        toast.info(`Photo set as the paper for page ${page + 1}.`);
+      } catch {
+        toast.error('That image could not be opened.');
+      }
+    },
+    [setPagePaper, toast],
+  );
+
+  const paperLabel = (paper: PaperChoice | null | undefined) =>
+    !paper
+      ? null
+      : paper.kind === 'photo'
+        ? 'Your photo'
+        : paper.kind === 'stock'
+          ? findStockPaper(paper.id)?.name ?? 'Paper photo'
+          : PAPER_TEMPLATES.find((t) => t.id === paper.template)?.name ?? 'Template';
+
   const uploadFont = async (file: File) => {
     try {
       const family = await registerCustomFont(file);
@@ -388,7 +454,7 @@ export function AssignmentMaker() {
                 const label = s.pageNumbers ? formatPageNumber(s, i, Math.max(1, pageCount)) : '';
                 const estW = label ? Math.max(24, label.length * fontPx * 0.48) : 0;
                 const pageNumBox = s.pageNumbers
-                  ? computePageNumberPlacement(s, doc.overrides, i, estW, fontPx)
+                  ? computePageNumberPlacement(s, doc.overrides, i, estW, fontPx, paperForPage(s, doc.pagePapers, i))
                   : null;
                 return (
                 <PageCanvas
@@ -401,6 +467,7 @@ export function AssignmentMaker() {
                   diagrams={diagramsWithTint.filter((d) => d.page === i)}
                   selectedDiagram={selectedDiagram}
                   hasOverride={Boolean(doc.overrides[i])}
+                  paperLabel={doc.pagePapers[i] && !samePaper(doc.pagePapers[i], s.paper) ? paperLabel(doc.pagePapers[i]) : null}
                   active={i === activePage}
                   pageNumberBox={pageNumBox}
                   pageNumberOffsetX={s.pageNumberOffsetX}
@@ -414,7 +481,10 @@ export function AssignmentMaker() {
                     update((d) => ({ ...d, diagrams: d.diagrams.filter((x) => x.id !== id) }), false);
                     setSelectedDiagram(null);
                   }}
-                  onAddDiagram={() => openDiagramPicker(i)}
+                  onChangePaper={() => {
+                    setActivePage(i);
+                    setPagePaperDialog(i);
+                  }}
                   onCustomize={() => setLayoutDialogPage(i)}
                   onDownload={() => {
                     setActivePage(i);
@@ -497,6 +567,53 @@ export function AssignmentMaker() {
           <PaperPicker engine={engine} pageSize={s.pageSize} selected={selectedPaper} onPickTemplate={pickTemplate} onPickStock={pickStock} onPickPhoto={pickPhoto} compact />
         </PaperDialog>
       )}
+      {pagePaperDialog !== null && (() => {
+        const page = pagePaperDialog;
+        const own = doc.pagePapers[page];
+        const hasOwn = Boolean(own && !samePaper(own, s.paper));
+        const current = paperForPage(s, doc.pagePapers, page);
+        const selected = !current ? null : current.kind === 'photo' ? (hasOwn ? 'photo' : null) : current.kind === 'stock' ? current.id : current.template;
+        return (
+          <PaperDialog title={`Choose paper for page ${page + 1}`} onClose={() => setPagePaperDialog(null)}>
+            <div className="am-page-paper-bar">
+              <p>
+                {hasOwn
+                  ? <>This page uses <strong>{paperLabel(own)}</strong>. Other pages keep <strong>{paperName ?? 'the document paper'}</strong>.</>
+                  : <>Only page {page + 1} changes. Other pages keep <strong>{paperName ?? 'the document paper'}</strong>.</>}
+              </p>
+              <div className="am-page-paper-actions">
+                {hasOwn && (
+                  <button type="button" className="btn secondary" onClick={() => setPagePaper(page, null)}>
+                    <RotateCcw size={14} />Use document paper
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => {
+                    setPagePaperDialog(null);
+                    openDiagramPicker(page);
+                  }}
+                >
+                  <Shapes size={14} />Insert image as diagram
+                </button>
+              </div>
+            </div>
+            <PaperPicker
+              engine={engine}
+              pageSize={s.pageSize}
+              selected={selected}
+              onPickTemplate={(id) => setPagePaper(page, { kind: 'template', template: id })}
+              onPickStock={(id) => {
+                const paper = findStockPaper(id);
+                if (paper) setPagePaper(page, { kind: 'stock', id }, stockLayout(paper, s.pageSize));
+              }}
+              onPickPhoto={(file) => void pickPagePhoto(page, file)}
+              compact
+            />
+          </PaperDialog>
+        );
+      })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {confirmReset && (
         <ConfirmDialog
