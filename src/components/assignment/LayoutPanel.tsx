@@ -105,7 +105,7 @@ export function LayoutPanel({
     : !s.snapToLines
       ? 'Detect the ruled lines on the paper photo and write on them'
       : rulingStatus === 'detected'
-        ? 'Ruled lines detected — text is aligned to the paper'
+        ? 'Ruled lines detected — text is aligned to the paper, and pages with a different paper adjust on their own'
         : rulingStatus === 'none'
           ? 'No ruled lines found on this paper — adjust the sliders manually'
           : 'Detecting ruled lines…';
