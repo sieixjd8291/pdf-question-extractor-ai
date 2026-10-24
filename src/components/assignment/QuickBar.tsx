@@ -22,6 +22,7 @@ import {
   INK_PRESETS,
   PENS,
   inkColor,
+  type ArrangeMode,
   type AssignmentSettings,
   type TextAlign,
 } from '../../lib/handwriting/catalog';
@@ -43,6 +44,8 @@ export interface QuickBarProps {
   fullscreen: boolean;
   onToggleFullscreen: () => void;
   onReset: () => void;
+  arrangeMode: ArrangeMode;
+  onArrangeMode: (mode: ArrangeMode) => void;
 }
 
 const RATES = [0, 1, 2, 3, 5];
@@ -114,7 +117,13 @@ function Stepper({ value, onChange, min, max, step = 1, suffix = '', label }: {
   );
 }
 
-export function QuickBar({ settings: s, onSettings, ...actions }: QuickBarProps) {
+const ARRANGE_MODES: { id: ArrangeMode; label: string; hint: string }[] = [
+  { id: 'line', label: 'Line', hint: 'Drag whole lines on the page' },
+  { id: 'word', label: 'Words', hint: 'Drag individual words on the page' },
+  { id: 'page', label: 'Page', hint: 'Drag all text on a page at once' },
+];
+
+export function QuickBar({ settings: s, onSettings, arrangeMode, onArrangeMode, ...actions }: QuickBarProps) {
   const [open, setOpen] = useState<string | null>(null);
   const font = HANDWRITING_FONTS.find((f) => f.family === s.fontFamily);
   const pen = PENS.find((p) => p.id === s.pen);
@@ -138,6 +147,22 @@ export function QuickBar({ settings: s, onSettings, ...actions }: QuickBarProps)
       </div>
 
       <div className="qb-divider" aria-hidden="true" />
+
+      <div className="qb-group qb-seg qb-arrange" role="radiogroup" aria-label="Move text by">
+        {ARRANGE_MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            role="radio"
+            aria-checked={arrangeMode === m.id}
+            className={`qb-btn${arrangeMode === m.id ? ' on' : ''}`}
+            title={m.hint}
+            onClick={() => onArrangeMode(m.id)}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
 
       <button type="button" className={`qb-btn qb-pill${s.combineFonts ? ' on' : ''}`} aria-pressed={s.combineFonts} onClick={() => onSettings({ combineFonts: !s.combineFonts })}>
         <Layers size={15} />Combine

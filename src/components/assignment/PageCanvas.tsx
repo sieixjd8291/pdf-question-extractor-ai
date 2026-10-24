@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Download, ImagePlus, SlidersHorizontal, SunMedium, Trash2, Droplet } from 'lucide-react';
 import type { ActiveGuide, Diagram } from '../../lib/handwriting/catalog';
 import type { PageNumberBox } from '../../lib/handwriting/render';
@@ -30,6 +30,9 @@ interface Props {
   /** True when this page has its own image adjustments. */
   hasAdjust?: boolean;
   onAdjust: () => void;
+  /** Drag handles for moving lines, words or the whole page of text. */
+  arrangeLayer?: ReactNode;
+  onClearArrange?: () => void;
 }
 
 export function PageCanvas(p: Props) {
@@ -168,12 +171,16 @@ export function PageCanvas(p: Props) {
         className="am-page-frame"
         style={{ aspectRatio: `${p.pageW} / ${p.pageH}` }}
         onPointerDown={(e) => {
-          if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'CANVAS') p.onSelectDiagram(null);
+          if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'CANVAS') {
+            p.onSelectDiagram(null);
+            if (!e.shiftKey) p.onClearArrange?.();
+          }
         }}
       >
         <div ref={hostRef} className="am-canvas-host">
           {!p.canvas && <div className="am-page-skeleton" aria-hidden="true" />}
         </div>
+        {p.canvas && p.arrangeLayer}
         {pn && (
           <div
             className="am-pnum-hotspot"

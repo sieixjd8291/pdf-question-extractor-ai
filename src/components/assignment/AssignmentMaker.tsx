@@ -1,10 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileImage, Loader2, RotateCcw, Shapes } from 'lucide-react';
+import { FileImage, Loader2, Move, RotateCcw, Shapes } from 'lucide-react';
 import './assignment.css';
 import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
-import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
+import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type ArrangeMode, type Diagram, type TextOffset, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
@@ -14,6 +14,7 @@ import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
+import { TextArrangeLayer, blocksForMode, clampDelta, selectionBounds, shiftedOffsets, type MarginBox } from './TextArrangeLayer';
 import { TextPanel } from './TextPanel';
 import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
@@ -97,6 +98,61 @@ export function AssignmentMaker() {
   const getVisiblePages = useCallback(() => [...visiblePages.current].sort((a, b) => a - b), []);
   const pages = useHandwritingPages(engine, doc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
+
+  const [arrangeMode, setArrangeMode] = useState<ArrangeMode>('line');
+  const [arrangeSel, setArrangeSel] = useState<{ page: number; ids: string[] }>({ page: 0, ids: [] });
+  const changeArrangeMode = useCallback((mode: ArrangeMode) => {
+    setArrangeMode(mode);
+    setArrangeSel({ page: 0, ids: [] });
+  }, []);
+  const clearArrange = useCallback(() => setArrangeSel((cur) => (cur.ids.length ? { page: cur.page, ids: [] } : cur)), []);
+  const moveText = useCallback(
+    (patch: Record<string, TextOffset>) =>
+      update((d) => {
+        const textOffsets = { ...d.textOffsets };
+        for (const [id, o] of Object.entries(patch)) {
+          if (Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05) delete textOffsets[id];
+          else textOffsets[id] = o;
+        }
+        return { ...d, textOffsets };
+      }),
+    [update],
+  );
+  const resetTextOffsets = () => {
+    update((d) => ({ ...d, textOffsets: {} }), false);
+    setArrangeSel({ page: 0, ids: [] });
+  };
+  const movedCount = Object.keys(doc.textOffsets).length;
+  const marginBoxFor = (page: number): MarginBox => {
+    const L = layoutForPage(s, doc.overrides, page);
+    return { left: L.marginLeft, top: L.marginTop - L.lineHeight, right: size.width - L.marginRight, bottom: size.height - L.marginBottom };
+  };
+
+  const nudgeRef = useRef({ sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) });
+  nudgeRef.current = { sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const { sel, mode, input, offsets, box } = nudgeRef.current;
+      if (!sel.ids.length) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('textarea, input, select, [contenteditable="true"], [role="dialog"]')) return;
+      if (e.key === 'Escape') {
+        setArrangeSel({ page: sel.page, ids: [] });
+        return;
+      }
+      const dir: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      const d = dir[e.key];
+      if (!d || !input) return;
+      const bounds = selectionBounds(blocksForMode(input.layout.blocks[sel.page], mode), sel.ids);
+      if (!bounds) return;
+      e.preventDefault();
+      const step = e.shiftKey ? 10 : 2;
+      const [dx, dy] = clampDelta(bounds, box, d[0] * step, d[1] * step);
+      if (dx || dy) moveText(shiftedOffsets(sel.ids, offsets, dx, dy));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [moveText]);
 
   const movePageNumber = useCallback(
     (offsetX: number, offsetY: number) => updateSettings({ pageNumberOffsetX: offsetX, pageNumberOffsetY: offsetY }),
@@ -488,6 +544,8 @@ export function AssignmentMaker() {
     fullscreen={fullscreen}
     onToggleFullscreen={toggleFullscreen}
     onReset={() => setConfirmReset(true)}
+    arrangeMode={arrangeMode}
+    onArrangeMode={changeArrangeMode}
       />
 
       <div className="am-body" data-mobile-view={mobileView}>
@@ -505,9 +563,21 @@ export function AssignmentMaker() {
                 <button type="button" className="am-paper-chip" onClick={() => setPaperDialog(true)}>
                   <FileImage size={14} />{paperName ?? 'Paper'}<span>Change</span>
                 </button>
-                <span className="am-status" aria-live="polite">
-                  {pages.rendering || !engine ? <><Loader2 size={14} className="am-spin" />Writing…</> : `${pageCount} ${pageCount === 1 ? 'page' : 'pages'} · ${size.label}`}
-                </span>
+                <div className="am-arrange-bar">
+                  <span className="am-arrange-hint hide-sm">
+                    <Move size={13} aria-hidden="true" />
+                    Drag {arrangeMode === 'line' ? 'lines' : arrangeMode === 'word' ? 'words' : 'the page text'}
+                    {arrangeMode !== 'page' && <> · <kbd>Shift</kbd>+click to group</>}
+                  </span>
+                  {movedCount > 0 && (
+                    <button type="button" className="am-arrange-reset" onClick={resetTextOffsets}>
+                      <RotateCcw size={13} />Reset positions
+                    </button>
+                  )}
+                  <span className="am-status" aria-live="polite">
+                    {pages.rendering || !engine ? <><Loader2 size={14} className="am-spin" />Writing…</> : `${pageCount} ${pageCount === 1 ? 'page' : 'pages'} · ${size.label}`}
+                  </span>
+                </div>
               </div>
               {pages.error && <p className="am-error" role="alert">{pages.error}</p>}
               {doc.text.trim() === '' && <p className="am-empty-hint">Start typing in the panel to see your handwriting appear.</p>}
@@ -550,6 +620,20 @@ export function AssignmentMaker() {
                     setPagePaperDialog(i);
                   }}
                   onCustomize={() => setLayoutDialogPage(i)}
+                  onClearArrange={clearArrange}
+                  arrangeLayer={
+                    <TextArrangeLayer
+                      mode={arrangeMode}
+                      blocks={pages.input?.layout.blocks[i]}
+                      pageW={size.width}
+                      pageH={size.height}
+                      marginBox={marginBoxFor(i)}
+                      selection={arrangeSel.page === i ? arrangeSel.ids : []}
+                      offsets={doc.textOffsets}
+                      onSelect={(ids) => setArrangeSel({ page: i, ids })}
+                      onMove={moveText}
+                    />
+                  }
                   hasAdjust={!isNeutralAdjust(doc.pageAdjust[i])}
                   onAdjust={() => {
                     setActivePage(i);
