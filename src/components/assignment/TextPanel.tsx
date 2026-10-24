@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { BookOpenText, Eraser, FileUp, SeparatorHorizontal } from 'lucide-react';
 import { SAMPLE_TEXT, type AssignmentSettings } from '../../lib/handwriting/catalog';
+import { htmlToAssignmentText, shouldConvertHtml } from '../../lib/handwriting/pasteHtml';
 import { Section, Toggle } from './controls';
 
 export function TextPanel({ text, pages, settings, onText, onSettings }: {
@@ -33,7 +34,16 @@ export function TextPanel({ text, pages, settings, onText, onSettings }: {
         className="am-textarea"
         value={text}
         onChange={(e) => onText(e.target.value)}
-        placeholder={'Type or paste your text here (including math formulas or LaTeX like \\frac{1}{2}, \\sqrt{x})…'}
+        onPaste={(e) => {
+          if (!settings.markdown && !settings.latex) return;
+          const html = e.clipboardData.getData('text/html');
+          if (!html || !shouldConvertHtml(html)) return;
+          const converted = htmlToAssignmentText(html, { latex: settings.latex });
+          if (!converted) return;
+          e.preventDefault();
+          insertAtCursor(converted);
+        }}
+        placeholder={'Type or paste anything — ChatGPT answers, Markdown, LaTeX ($x^2$, \\frac{1}{2}, \\sqrt{x}), tables or code…'}
         aria-label="Assignment text"
         spellCheck
       />
@@ -67,8 +77,18 @@ export function TextPanel({ text, pages, settings, onText, onSettings }: {
           if (f) onText(await f.text(), false);
         }}
       />
-      <Toggle checked={settings.latex} onChange={(v) => onSettings({ latex: v })} label="Math & LaTeX" description="\frac, \sqrt, x^2, H_2O, Greek letters" />
-      <Toggle checked={settings.markdown} onChange={(v) => onSettings({ markdown: v })} label="Clean ChatGPT formatting" description="Strips **bold**, # headings become titles" />
+      <Toggle
+        checked={settings.latex}
+        onChange={(v) => onSettings({ latex: v })}
+        label="Math & LaTeX"
+        description="$…$, \[…\], \frac, \sqrt, x^2, matrices, cases, \ce{H2O}, Greek letters"
+      />
+      <Toggle
+        checked={settings.markdown}
+        onChange={(v) => onSettings({ markdown: v })}
+        label="Smart Markdown & paste cleanup"
+        description="Headings, bold/italic, lists, tables, code, links, quotes, emoji — paste straight from ChatGPT"
+      />
     </Section>
   );
 }
