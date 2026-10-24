@@ -398,6 +398,31 @@ export interface AssignmentDoc {
   /** Extra image adjustments for an individual page, stacked on `settings.adjust`. */
   pageAdjust: Record<number, ImageAdjust>;
   diagrams: Diagram[];
+  /** User drag offsets keyed by `blockKey` (page, line or word), in page units. */
+  textOffsets: TextOffsets;
+}
+
+export type ArrangeMode = 'line' | 'word' | 'page';
+
+export interface TextOffset {
+  x: number;
+  y: number;
+}
+
+export type TextOffsets = Record<string, TextOffset>;
+
+export interface TextBlock {
+  id: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface PageBlocks {
+  page: TextBlock | null;
+  lines: TextBlock[];
+  words: TextBlock[];
 }
 
 export function findFont(family: string, custom: HandwritingFont[] = []): HandwritingFont {

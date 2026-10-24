@@ -6,7 +6,10 @@ import {
   mistakeMask,
   type AssignmentSettings,
   type HandwritingFont,
+  type PageBlocks,
   type PageLayout,
+  type TextBlock,
+  type TextOffsets,
 } from './catalog';
 
 const FONT_CSS_HREF = '/fonts/handwriting/fonts.css';
@@ -142,9 +145,209 @@ export interface LayoutResult {
   glyphCount: number;
   strokes: Array<{ page: number; kind: number; points: Float32Array }>;
   glyphsByPage: number[][];
+  /** Movable text blocks per page, in page units, after user offsets are applied. */
+  blocks: PageBlocks[];
 }
 
 export const GLYPH_STRIDE = 10;
+
+const STROKE_UNDERLINE = 4;
+
+/** Key of the page, a line on it, or a word within that line in `AssignmentDoc.textOffsets`. */
+export function blockKey(page: number, line?: number, word?: number): string {
+  if (line === undefined) return `p${page}`;
+  if (word === undefined) return `p${page}.l${line}`;
+  return `p${page}.l${line}.w${word}`;
+}
+
+interface Box { x0: number; y0: number; x1: number; y1: number }
+
+const emptyBox = (): Box => ({ x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+const grow = (b: Box, x0: number, y0: number, x1: number, y1: number) => {
+  if (x0 < b.x0) b.x0 = x0;
+  if (y0 < b.y0) b.y0 = y0;
+  if (x1 > b.x1) b.x1 = x1;
+  if (y1 > b.y1) b.y1 = y1;
+};
+
+/**
+ * Groups the engine's glyph stream into pages → lines → words, then shifts each
+ * glyph (and its cross-out / caret / underline strokes) by the user's page, line
+ * and word offsets. The engine emits glyphs line by line in reading order, so a
+ * new line starts wherever x jumps back or the baseline jumps; a new word starts
+ * wherever the gap to the previous glyph's advance is wider than a letter gap.
+ */
+function arrangeText(
+  glyphs: Float32Array,
+  glyphCount: number,
+  strokes: LayoutResult['strokes'],
+  pages: number,
+  s: AssignmentSettings,
+  overrides: Record<number, PageLayout>,
+  fontA: HandwritingFont,
+  fontB: HandwritingFont,
+  wa: Float32Array,
+  wb: Float32Array,
+  offsets: TextOffsets,
+): PageBlocks[] {
+  const fs = s.fontSize;
+  const S = GLYPH_STRIDE;
+  const spaceW = (wa[wa.length - 1] * fs) / 100;
+  const wordGap = Math.max(fs * 0.07, 0.5 * Math.max(fs * 0.12, spaceW + s.wordSpacing));
+  const lineOf = new Int32Array(glyphCount);
+  const wordOf = new Int32Array(glyphCount);
+  const lineBase: number[][] = Array.from({ length: pages }, () => []);
+  const wordCount: number[][] = Array.from({ length: pages }, () => []);
+  const advOf = new Float32Array(glyphCount);
+
+  let curPage = -1;
+  let line = -1;
+  let word = -1;
+  let prevX = 0;
+  let prevEnd = 0;
+  let prevY = 0;
+  let lineH = s.layout.lineHeight;
+  for (let i = 0; i < glyphCount; i++) {
+    const o = i * S;
+    const page = glyphs[o];
+    const x = glyphs[o + 2];
+    const y = glyphs[o + 3];
+    const scale = glyphs[o + 5];
+    const useB = glyphs[o + 6] > 0.5;
+    const flags = glyphs[o + 9];
+    const unitW = (useB ? wb : wa)[glyphs[o + 1]] ?? 50;
+    const adv = (unitW * fs) / 100 * scale + s.letterSpacing * (scale < 0.75 ? 0.62 : 1);
+    advOf[i] = Math.max(adv, fs * scale * 0.15);
+    if (page !== curPage) {
+      curPage = page;
+      line = -1;
+      lineH = layoutForPage(s, overrides, page).lineHeight;
+    }
+    if ((flags & GLYPH_FLAG.insert) !== 0 && line >= 0) {
+      lineOf[i] = line;
+      wordOf[i] = word;
+      continue;
+    }
+    if (line < 0 || x < prevX - fs * 0.5 || Math.abs(y - prevY) > lineH * 0.55) {
+      line = lineBase[page].length;
+      lineBase[page].push(y);
+      wordCount[page].push(1);
+      word = 0;
+    } else if (x - prevEnd > wordGap) {
+      word = wordCount[page][line]++;
+    }
+    lineOf[i] = line;
+    wordOf[i] = word;
+    prevX = x;
+    prevEnd = x + adv;
+    prevY = y;
+  }
+
+  const glyphBox = (i: number, dx: number, dy: number): Box => {
+    const o = i * S;
+    const f = glyphs[o + 6] > 0.5 ? fontB : fontA;
+    const px = fs * glyphs[o + 5] * f.sizeAdjust;
+    const x = glyphs[o + 2] + dx;
+    const y = glyphs[o + 3] + dy;
+    return { x0: x, y0: y - px * 0.78, x1: x + advOf[i], y1: y + px * 0.28 };
+  };
+
+  const wordBoxesPre: Box[][][] = lineBase.map((lines, page) => lines.map((_, l) => Array.from({ length: wordCount[page][l] }, emptyBox)));
+  for (let i = 0; i < glyphCount; i++) {
+    const page = glyphs[i * S];
+    const b = glyphBox(i, 0, 0);
+    const wb_ = wordBoxesPre[page]?.[lineOf[i]]?.[wordOf[i]];
+    if (wb_) grow(wb_, b.x0, b.y0, b.x1, b.y1);
+  }
+
+  const off = (key: string) => offsets[key];
+  const shiftFor = (page: number, l: number, w: number): [number, number] => {
+    let dx = 0;
+    let dy = 0;
+    const a = off(blockKey(page));
+    if (a) { dx += a.x; dy += a.y; }
+    if (l >= 0) {
+      const b = off(blockKey(page, l));
+      if (b) { dx += b.x; dy += b.y; }
+      if (w >= 0) {
+        const c = off(blockKey(page, l, w));
+        if (c) { dx += c.x; dy += c.y; }
+      }
+    }
+    return [dx, dy];
+  };
+
+  for (const st of strokes) {
+    const pts = st.points;
+    const n = pts.length / 2;
+    if (!n || st.page >= pages) continue;
+    let mx = 0;
+    let my = 0;
+    for (let k = 0; k < n; k++) {
+      mx += pts[k * 2];
+      my += pts[k * 2 + 1];
+    }
+    mx /= n;
+    my /= n;
+    let bestLine = -1;
+    let bestDist = Infinity;
+    lineBase[st.page].forEach((base, l) => {
+      const d = Math.abs(base - my);
+      if (d < bestDist) {
+        bestDist = d;
+        bestLine = l;
+      }
+    });
+    let bestWord = -1;
+    if (bestLine >= 0 && st.kind !== STROKE_UNDERLINE) {
+      const words = wordBoxesPre[st.page][bestLine];
+      const pad = fs * 0.2;
+      bestWord = words.findIndex((b) => mx >= b.x0 - pad && mx <= b.x1 + pad);
+    }
+    const [dx, dy] = shiftFor(st.page, bestLine, bestWord);
+    if (dx === 0 && dy === 0) continue;
+    for (let k = 0; k < n; k++) {
+      pts[k * 2] += dx;
+      pts[k * 2 + 1] += dy;
+    }
+  }
+
+  const wordBoxes: Box[][][] = lineBase.map((lines, page) => lines.map((_, l) => Array.from({ length: wordCount[page][l] }, emptyBox)));
+  for (let i = 0; i < glyphCount; i++) {
+    const o = i * S;
+    const page = glyphs[o];
+    const [dx, dy] = shiftFor(page, lineOf[i], wordOf[i]);
+    if (dx !== 0 || dy !== 0) {
+      glyphs[o + 2] += dx;
+      glyphs[o + 3] += dy;
+    }
+    const b = glyphBox(i, 0, 0);
+    const target = wordBoxes[page]?.[lineOf[i]]?.[wordOf[i]];
+    if (target) grow(target, b.x0, b.y0, b.x1, b.y1);
+  }
+
+  return wordBoxes.map((lines, page) => {
+    const pageBox = emptyBox();
+    const lineBlocks: TextBlock[] = [];
+    const wordBlocks: TextBlock[] = [];
+    lines.forEach((words, l) => {
+      const lineBox = emptyBox();
+      words.forEach((b, w) => {
+        if (!Number.isFinite(b.x0)) return;
+        wordBlocks.push({ id: blockKey(page, l, w), ...b });
+        grow(lineBox, b.x0, b.y0, b.x1, b.y1);
+      });
+      if (!Number.isFinite(lineBox.x0)) return;
+      lineBlocks.push({ id: blockKey(page, l), ...lineBox });
+      grow(pageBox, lineBox.x0, lineBox.y0, lineBox.x1, lineBox.y1);
+    });
+    return {
+      page: Number.isFinite(pageBox.x0) ? { id: blockKey(page), ...pageBox } : null,
+      lines: lineBlocks,
+      words: wordBlocks,
+    };
+  });
+}
 
 export function runLayout(
   engine: HandwritingEngine,
@@ -153,6 +356,7 @@ export function runLayout(
   fontA: HandwritingFont,
   fontB: HandwritingFont,
   overrides: Record<number, PageLayout>,
+  offsets: TextOffsets = {},
 ): LayoutResult {
   const size = PAGE_SIZES[s.pageSize];
   const useB = s.combineFonts && fontB.family !== fontA.family;
@@ -192,7 +396,7 @@ export function runLayout(
   const pages = Math.max(1, out[0]);
   const glyphCount = out[1];
   const strokeCount = out[2];
-  const glyphs = out.subarray(3, 3 + glyphCount * GLYPH_STRIDE);
+  const glyphs = out.slice(3, 3 + glyphCount * GLYPH_STRIDE);
   const glyphsByPage: number[][] = Array.from({ length: pages }, () => []);
   for (let i = 0; i < glyphCount; i++) glyphsByPage[glyphs[i * GLYPH_STRIDE]]?.push(i);
   const strokes: LayoutResult['strokes'] = [];
@@ -201,10 +405,11 @@ export function runLayout(
     const page = out[p];
     const kind = out[p + 1];
     const count = out[p + 2];
-    strokes.push({ page, kind, points: out.subarray(p + 3, p + 3 + count * 2) });
+    strokes.push({ page, kind, points: out.slice(p + 3, p + 3 + count * 2) });
     p += 3 + count * 2;
   }
-  return { pages, glyphs, glyphCount, strokes, glyphsByPage };
+  const blocks = arrangeText(glyphs, glyphCount, strokes, pages, s, overrides, fontA, useB ? fontB : fontA, wa, wb, offsets);
+  return { pages, glyphs, glyphCount, strokes, glyphsByPage, blocks };
 }
 
 export const GLYPH_FLAG = { mistake: 1, heading: 2, overwrite: 4, overwritten: 8, insert: 16 } as const;

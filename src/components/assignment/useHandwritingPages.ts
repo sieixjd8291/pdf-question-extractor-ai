@@ -137,7 +137,7 @@ export function useHandwritingPages(
           const fA = findFont(s.fontFamily, cur.customFonts);
           const fB = findFont(s.fontFamilyB, cur.customFonts);
           const p = getPrepared(cur.engine, cur.doc.text, s.latex, s.markdown);
-          const layout = runLayout(cur.engine, s, p.seg, fA, fB, cur.doc.overrides);
+          const layout = runLayout(cur.engine, s, p.seg, fA, fB, cur.doc.overrides, cur.doc.textOffsets);
           const input: RenderInput = {
             engine: cur.engine,
             settings: s,
@@ -217,7 +217,7 @@ export function useHandwritingPages(
         }
         if (cancelled) return;
 
-        const layout = runLayout(engine, settings, p.seg, fA, fB, doc.overrides);
+        const layout = runLayout(engine, settings, p.seg, fA, fB, doc.overrides, doc.textOffsets);
         const input: RenderInput = {
           engine,
           settings,

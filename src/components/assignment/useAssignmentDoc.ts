@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DEFAULT_ADJUST, DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings, type ImageAdjust, type PaperChoice } from '../../lib/handwriting/catalog';
+import { DEFAULT_ADJUST, DEFAULT_SETTINGS, SAMPLE_TEXT, type AssignmentDoc, type AssignmentSettings, type ImageAdjust, type PaperChoice, type TextOffset, type TextOffsets } from '../../lib/handwriting/catalog';
 
 const STORAGE_KEY = 'assignment-maker-draft-v1';
 const COALESCE_MS = 600;
@@ -24,8 +24,17 @@ function restorePageAdjust(saved: unknown): Record<number, ImageAdjust> {
   return out;
 }
 
+function restoreTextOffsets(saved: unknown): TextOffsets {
+  if (!saved || typeof saved !== 'object') return {};
+  const out: TextOffsets = {};
+  for (const [k, v] of Object.entries(saved as Record<string, Partial<TextOffset>>)) {
+    if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) out[k] = { x: Number(v.x), y: Number(v.y) };
+  }
+  return out;
+}
+
 function loadDraft(): AssignmentDoc {
-  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [] };
+  const fresh: AssignmentDoc = { text: SAMPLE_TEXT, settings: DEFAULT_SETTINGS, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [], textOffsets: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return fresh;
@@ -45,6 +54,7 @@ function loadDraft(): AssignmentDoc {
       pagePapers: restorePagePapers(saved.pagePapers),
       pageAdjust: restorePageAdjust(saved.pageAdjust),
       diagrams: [],
+      textOffsets: restoreTextOffsets(saved.textOffsets),
     };
   } catch {
     return fresh;
@@ -99,19 +109,19 @@ export function useAssignmentDoc() {
   }, []);
 
   const reset = useCallback(() => {
-    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [] }, false);
+    commit({ text: '', settings: { ...DEFAULT_SETTINGS, paper: current.current.settings.paper }, overrides: {}, pagePapers: {}, pageAdjust: {}, diagrams: [], textOffsets: {} }, false);
   }, [commit]);
 
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers, pageAdjust: doc.pageAdjust }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers, pageAdjust: doc.pageAdjust, textOffsets: doc.textOffsets }));
       } catch {
         // Storage full or blocked: the draft simply isn't kept.
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers, doc.pageAdjust]);
+  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers, doc.pageAdjust, doc.textOffsets]);
 
   return {
     doc,
