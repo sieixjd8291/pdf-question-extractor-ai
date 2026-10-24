@@ -214,6 +214,30 @@ export function layoutFromRuling(ruling: DetectedRuling, current: PageLayout, pa
  * Keeps a user-edited layout aligned with the printed lines' tilt while leaving
  * every slider value exactly where the user dragged it.
  */
+/**
+ * Keeps a page's own layout choices (margins, how far down it starts) but locks
+ * the line spacing, first baseline and tilt onto the detected ruled lines.
+ */
+export function fitLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
+  const lh = ruling.lineHeight;
+  const firstAtMargin = ruling.firstLine + ruling.slope * (desired.marginLeft - ruling.centerX);
+  const steps = Math.max(0, Math.round((desired.marginTop - firstAtMargin) / lh));
+  return {
+    ...desired,
+    lineHeight: lh,
+    marginTop: Math.round((firstAtMargin + steps * lh) * 10) / 10,
+    marginBottom: Math.min(pageH, Math.max(desired.marginBottom, Math.floor(pageH - ruling.lastLine - 1))),
+    angle: ruling.angle,
+  };
+}
+
+export function layoutsDiffer(a: PageLayout, b: PageLayout): boolean {
+  return (
+    Math.abs((a.angle ?? 0) - (b.angle ?? 0)) > 0.01 ||
+    (['marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'lineHeight'] as const).some((k) => Math.abs(a[k] - b[k]) > 0.05)
+  );
+}
+
 export function snapLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
   return {
     ...desired,

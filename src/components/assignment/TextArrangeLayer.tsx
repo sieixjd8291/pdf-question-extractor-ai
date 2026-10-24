@@ -34,12 +34,24 @@ export function selectionBounds(blocks: TextBlock[], ids: string[]): MarginBox |
  * Limits a drag so the selection stays inside the page margins. Text that already
  * pokes past a margin (descenders, jitter) is never pushed back; it just can't go further out.
  */
-export function clampDelta(bounds: MarginBox, box: MarginBox, dx: number, dy: number): [number, number] {
+export function clampDelta(bounds: MarginBox, box: MarginBox, dx: number, dy: number, lineStep?: number | null): [number, number] {
   const minX = Math.min(0, box.left - bounds.left);
   const maxX = Math.max(0, box.right - bounds.right);
   const minY = Math.min(0, box.top - bounds.top);
   const maxY = Math.max(0, box.bottom - bounds.bottom);
-  return [Math.min(maxX, Math.max(minX, dx)), Math.min(maxY, Math.max(minY, dy))];
+  const x = Math.min(maxX, Math.max(minX, dx));
+  if (!lineStep) return [x, Math.min(maxY, Math.max(minY, dy))];
+  // "Write within the lines": vertical moves jump whole ruled lines so text always sits on a rule.
+  let y = Math.round(dy / lineStep) * lineStep;
+  if (y > maxY) y -= lineStep;
+  if (y < minY) y += lineStep;
+  if (y > maxY || y < minY) y = 0;
+  return [x, y];
+}
+
+/** Rounds a stored vertical offset onto whole line steps. */
+export function snapOffsetY(y: number, lineStep: number): number {
+  return Math.round(Math.round(y / lineStep) * lineStep * 10) / 10;
 }
 
 export function shiftedOffsets(ids: string[], base: TextOffsets, dx: number, dy: number): Record<string, TextOffset> {
@@ -49,6 +61,18 @@ export function shiftedOffsets(ids: string[], base: TextOffsets, dx: number, dy:
     patch[id] = { x: Math.round(((o?.x ?? 0) + dx) * 10) / 10, y: Math.round(((o?.y ?? 0) + dy) * 10) / 10 };
   }
   return patch;
+}
+
+/** Inverse of the page-look tilt/zoom so screen drags map back to page directions. */
+function lookInverse(el: HTMLElement): { host: HTMLElement; m: DOMMatrix | null } {
+  const look = el.closest<HTMLElement>('.am-page-look');
+  const t = look ? getComputedStyle(look).transform : 'none';
+  const host = look?.parentElement ?? el;
+  if (!t || t === 'none') return { host, m: null };
+  const m = new DOMMatrix(t).inverse();
+  m.e = 0;
+  m.f = 0;
+  return { host, m };
 }
 
 interface Props {
@@ -61,6 +85,8 @@ interface Props {
   offsets: TextOffsets;
   onSelect: (ids: string[]) => void;
   onMove: (patch: Record<string, TextOffset>) => void;
+  /** Line height to snap vertical moves to when writing within the lines. */
+  lineStep?: number | null;
 }
 
 const MODE_LABEL: Record<ArrangeMode, string> = { line: 'line', word: 'word', page: 'page text' };
@@ -90,8 +116,10 @@ export function TextArrangeLayer(p: Props) {
     const bounds = selectionBounds(list, ids);
     if (!frame || !bounds) return;
     e.preventDefault();
-    const rect = frame.getBoundingClientRect();
+    const { host, m: inv } = lookInverse(frame);
+    const rect = host.getBoundingClientRect();
     const k = p.pageW / rect.width;
+    const lineStep = p.lineStep;
     const startX = e.clientX;
     const startY = e.clientY;
     const base = p.offsets;
@@ -103,11 +131,18 @@ export function TextArrangeLayer(p: Props) {
     const apply = () => {
       raf = 0;
       if (!last) return;
-      const rawX = (last.clientX - startX) * k;
-      const rawY = (last.clientY - startY) * k;
+      let sx = last.clientX - startX;
+      let sy = last.clientY - startY;
+      if (inv) {
+        const pt = inv.transformPoint(new DOMPoint(sx, sy));
+        sx = pt.x;
+        sy = pt.y;
+      }
+      const rawX = sx * k;
+      const rawY = sy * k;
       if (!moved && Math.hypot(rawX, rawY) < 3 * k) return;
       moved = true;
-      const [dx, dy] = clampDelta(bounds, box, rawX, rawY);
+      const [dx, dy] = clampDelta(bounds, box, rawX, rawY, lineStep);
       p.onMove(shiftedOffsets(ids, base, dx, dy));
     };
     const move = (ev: PointerEvent) => {
