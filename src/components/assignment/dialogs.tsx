@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, Download, FileArchive, FileImage, FileText, X } from 'lucide-react';
+import { Ban, ChevronDown, Dices, Download, FileArchive, FileImage, FileText, Lock, LockOpen, RotateCcw, X } from 'lucide-react';
 import { useDialog } from '../../hooks/useDialog';
 import { isNeutralAdjust, type ActiveGuide, type ImageAdjust, type PageLayout } from '../../lib/handwriting/catalog';
 import type { ExportFormat } from '../../lib/handwriting/export';
@@ -94,6 +94,67 @@ export function PageLayoutDialog({
   );
 }
 
+export type PageLookState = 'auto' | 'locked' | 'off';
+
+export interface PageLookControls {
+  /** False when Page variations is Off for the whole document. */
+  enabled: boolean;
+  state: PageLookState;
+  onReroll: () => void;
+  onLock: (locked: boolean) => void;
+  onOff: (off: boolean) => void;
+  onReset: () => void;
+}
+
+function PageLookSection({ page, look }: { page: number; look: PageLookControls }) {
+  if (!look.enabled) {
+    return <p className="am-help">Turn on Page variations in Realism to give each page its own photo look.</p>;
+  }
+  const isOff = look.state === 'off';
+  return (
+    <div className="am-pnum-card">
+      <div className="am-pnum-head">
+        <span className="am-label">Page {page + 1} look</span>
+        {look.state !== 'auto' && (
+          <button type="button" className="am-pnum-reset" onClick={look.onReset} title="Follow the document's variation again">
+            <RotateCcw size={11} />Reset
+          </button>
+        )}
+      </div>
+      <div className="am-chip-row">
+        <button type="button" className="am-chip-btn" onClick={look.onReroll} disabled={isOff}>
+          <Dices size={13} />Re-roll this page
+        </button>
+        <button
+          type="button"
+          className={`am-chip-btn${look.state === 'locked' ? ' active' : ''}`}
+          onClick={() => look.onLock(look.state !== 'locked')}
+          aria-pressed={look.state === 'locked'}
+          disabled={isOff}
+        >
+          {look.state === 'locked' ? <Lock size={13} /> : <LockOpen size={13} />}
+          {look.state === 'locked' ? 'Look locked' : 'Lock look'}
+        </button>
+        <button
+          type="button"
+          className={`am-chip-btn${isOff ? ' active' : ''}`}
+          onClick={() => look.onOff(!isOff)}
+          aria-pressed={isOff}
+        >
+          <Ban size={13} />No variation
+        </button>
+      </div>
+      <p className="am-pnum-hint">
+        {look.state === 'locked'
+          ? 'This page keeps its look when you re-roll all pages.'
+          : isOff
+            ? 'This page is drawn flat, without crop, colour or light changes.'
+            : 'This page follows the document re-roll.'}
+      </p>
+    </div>
+  );
+}
+
 export function PageAdjustDialog({
   page,
   value,
@@ -101,6 +162,7 @@ export function PageAdjustDialog({
   onReset,
   onClose,
   onActiveGuide,
+  look,
 }: {
   page: number;
   value: ImageAdjust;
@@ -108,6 +170,7 @@ export function PageAdjustDialog({
   onReset: () => void;
   onClose: () => void;
   onActiveGuide?: (guide: ActiveGuide) => void;
+  look?: PageLookControls;
 }) {
   const ref = useDialog(onClose);
   return (
@@ -135,10 +198,11 @@ export function PageAdjustDialog({
           <p className="am-help">
             Changes apply only to page {page + 1}, stacked on top of the Realism adjustments for all pages.
           </p>
+          {look && <PageLookSection page={page} look={look} />}
           <AdjustFields value={value} onChange={(patch) => onChange({ ...value, ...patch })} onActiveGuide={onActiveGuide} />
           <footer className="am-dialog-foot">
             <button type="button" className="btn quiet" onClick={onReset} disabled={isNeutralAdjust(value)}>
-              Reset page
+              Reset adjustments
             </button>
             <button type="button" className="btn primary" onClick={onClose}>
               Done

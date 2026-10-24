@@ -139,7 +139,8 @@
   touch-action: pan-y;
 }
 .am-page.active .am-page-frame { box-shadow: 0 0 0 2px var(--accent-solid), var(--shadow-lg); }
-.am-canvas-host, .am-canvas-host > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.am-page-look { position: absolute; inset: 0; transform-origin: 50% 50%; }
+  .am-canvas-host, .am-canvas-host > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 .am-page-canvas { display: block; width: 100%; height: 100%; }
 .am-page-skeleton {
   background: linear-gradient(100deg, #f4f2ec 30%, #ecebe5 50%, #f4f2ec 70%);

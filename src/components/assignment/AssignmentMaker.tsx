@@ -7,6 +7,7 @@ import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwri
 import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type ArrangeMode, type Diagram, type TextOffset, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
+import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { detectRuling, layoutFromRuling, snapLayoutToRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
@@ -24,7 +25,7 @@ import { PenPanel } from './PenPanel';
 import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
-import { ExportMenu, HelpDialog, PageAdjustDialog, PageLayoutDialog, PaperDialog } from './dialogs';
+import { ExportMenu, HelpDialog, PageAdjustDialog, PageLayoutDialog, PaperDialog, type PageLookControls } from './dialogs';
 import { MobileTabs, type MobileView } from './MobileTabs';
 
 // Panels only depend on settings + stable callbacks, so typing or page
@@ -512,6 +513,27 @@ export function AssignmentMaker() {
       return { ...d, pageAdjust };
     }, Boolean(adjust));
 
+  const setPageVariation = (page: number, pv: PageVariation | null) =>
+    update((d) => {
+      const pageVariation = { ...d.pageVariation };
+      if (pv) pageVariation[page] = pv;
+      else delete pageVariation[page];
+      return { ...d, pageVariation };
+    }, false);
+
+  const pageLookControls = (page: number): PageLookControls => {
+    const pv = doc.pageVariation[page];
+    return {
+      enabled: (s.variation ?? 'off') !== 'off',
+      state: pv?.off ? 'off' : pv?.seed !== undefined ? 'locked' : 'auto',
+      onReroll: () => setPageVariation(page, { seed: Math.floor(Math.random() * 4_294_967_295) }),
+      onLock: (locked) =>
+        setPageVariation(page, locked ? { seed: effectivePageSeed(s.variationSeed ?? 0, undefined, page) } : null),
+      onOff: (off) => setPageVariation(page, off ? { off: true } : null),
+      onReset: () => setPageVariation(page, null),
+    };
+  };
+
   const paperName = s.paper?.kind === 'photo'
     ? 'Your photo'
     : s.paper?.kind === 'stock'
@@ -635,6 +657,18 @@ export function AssignmentMaker() {
                     />
                   }
                   hasAdjust={!isNeutralAdjust(doc.pageAdjust[i])}
+                  lookTransform={lookTransformCss(
+                    pageLook(s.variation, s.variationSeed ?? 0, doc.pageVariation[i], i, size.width, size.height),
+                  )}
+                  lookLabel={
+                    (s.variation ?? 'off') === 'off'
+                      ? null
+                      : doc.pageVariation[i]?.off
+                        ? 'No variation'
+                        : doc.pageVariation[i]?.seed !== undefined
+                          ? 'Locked look'
+                          : null
+                  }
                   onAdjust={() => {
                     setActivePage(i);
                     setAdjustDialogPage(i);
@@ -722,6 +756,7 @@ export function AssignmentMaker() {
           value={doc.pageAdjust[adjustDialogPage] ?? DEFAULT_ADJUST}
           onChange={(a) => setPageAdjust(adjustDialogPage, a)}
           onReset={() => setPageAdjust(adjustDialogPage, null)}
+          look={pageLookControls(adjustDialogPage)}
           onClose={() => {
             setActiveGuide(null);
             setAdjustDialogPage(null);

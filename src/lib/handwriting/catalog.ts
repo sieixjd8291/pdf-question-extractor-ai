@@ -1,3 +1,5 @@
+import type { PageVariation, VariationStrength } from './variation';
+
 export type FontCategory = 'cursive' | 'print' | 'world';
 
 export interface HandwritingFont {
@@ -311,6 +313,9 @@ export interface AssignmentSettings {
   photoFilter: boolean;
   photoStrength: number;
   adjust: ImageAdjust;
+  /** How much each page's framing, colour, light and grain differ, like separate phone photos. */
+  variation: VariationStrength;
+  variationSeed: number;
   seed: number;
   exportScale: 1 | 2 | 3;
   exportQuality: number;
@@ -370,6 +375,8 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   photoFilter: false,
   photoStrength: 0.6,
   adjust: DEFAULT_ADJUST,
+  variation: 'natural',
+  variationSeed: 2024,
   seed: 1337,
   exportScale: 2,
   exportQuality: 0.92,
@@ -397,6 +404,8 @@ export interface AssignmentDoc {
   pagePapers: Record<number, PaperChoice>;
   /** Extra image adjustments for an individual page, stacked on `settings.adjust`. */
   pageAdjust: Record<number, ImageAdjust>;
+  /** Per-page variation overrides (locked/re-rolled seed or turned off). */
+  pageVariation: Record<number, PageVariation>;
   diagrams: Diagram[];
   /** User drag offsets keyed by `blockKey` (page, line or word), in page units. */
   textOffsets: TextOffsets;
