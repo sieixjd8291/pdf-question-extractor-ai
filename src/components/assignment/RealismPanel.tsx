@@ -1,4 +1,5 @@
-import { RotateCcw } from 'lucide-react';
+import { Dices, RotateCcw } from 'lucide-react';
+import { VARIATION_STRENGTHS } from '../../lib/handwriting/variation';
 import {
   DEFAULT_ADJUST,
   isNeutralAdjust,
@@ -43,6 +44,7 @@ export function RealismPanel({
   const oy = s.pageNumberOffsetY ?? 0;
   const hasOffset = ox !== 0 || oy !== 0;
   const adjust = s.adjust ?? DEFAULT_ADJUST;
+  const variation = s.variation ?? 'off';
   const isSpiralPhoto = s.paper?.kind === 'stock' && s.paper.id === 'spiral-notebook';
 
   const pulsePageNumGuide = () => {
@@ -53,6 +55,39 @@ export function RealismPanel({
 
   return (
     <Section title="Realism" defaultOpen={false}>
+      <div className="am-pnum-card">
+        <div className="am-pnum-head">
+          <span className="am-label" id="am-variation-label">Page variations</span>
+          {variation !== 'off' && (
+            <button
+              type="button"
+              className="am-pnum-reset"
+              onClick={() => onSettings({ variationSeed: Math.floor(Math.random() * 1_000_000_000) })}
+              title="Give every unlocked page a fresh look"
+            >
+              <Dices size={11} />Re-roll
+            </button>
+          )}
+        </div>
+        <div className="am-seg" role="radiogroup" aria-labelledby="am-variation-label">
+          {VARIATION_STRENGTHS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              role="radio"
+              aria-checked={variation === v.id}
+              className={variation === v.id ? 'active' : ''}
+              onClick={() => onSettings({ variation: v.id })}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <p className="am-pnum-hint">
+          Each page gets its own crop, tilt, colour, light and grain, so pages look photographed separately. Use the
+          adjust button above a page to re-roll, lock or turn off just that page.
+        </p>
+      </div>
       <Toggle
         checked={s.photoFilter}
         onChange={(v) => onSettings({ photoFilter: v })}

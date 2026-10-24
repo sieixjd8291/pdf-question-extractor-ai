@@ -33,6 +33,10 @@ interface Props {
   /** Drag handles for moving lines, words or the whole page of text. */
   arrangeLayer?: ReactNode;
   onClearArrange?: () => void;
+  /** CSS transform for this page's variation crop/zoom/tilt (applied to canvas and overlays together). */
+  lookTransform?: string;
+  /** Chip text for a page-level variation override, e.g. "Locked look". */
+  lookLabel?: string | null;
 }
 
 export function PageCanvas(p: Props) {
@@ -143,6 +147,7 @@ export function PageCanvas(p: Props) {
           {p.paperLabel && <span className="am-chip">{p.paperLabel}</span>}
           {p.hasOverride && !p.paperLabel && <span className="am-chip">Custom layout</span>}
           {p.hasAdjust && <span className="am-chip">Adjusted</span>}
+          {p.lookLabel && <span className="am-chip">{p.lookLabel}</span>}
         </span>
         <div className="am-page-actions">
           <button
@@ -171,12 +176,14 @@ export function PageCanvas(p: Props) {
         className="am-page-frame"
         style={{ aspectRatio: `${p.pageW} / ${p.pageH}` }}
         onPointerDown={(e) => {
-          if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'CANVAS') {
+          const target = e.target as HTMLElement;
+          if (target === e.currentTarget || target.tagName === 'CANVAS' || target.classList.contains('am-page-look')) {
             p.onSelectDiagram(null);
             if (!e.shiftKey) p.onClearArrange?.();
           }
         }}
       >
+        <div className="am-page-look" style={p.lookTransform ? { transform: p.lookTransform } : undefined}>
         <div ref={hostRef} className="am-canvas-host">
           {!p.canvas && <div className="am-page-skeleton" aria-hidden="true" />}
         </div>
@@ -231,6 +238,7 @@ export function PageCanvas(p: Props) {
             </div>
           );
         })}
+        </div>
       </div>
     </article>
   );

@@ -16,6 +16,7 @@ import {
 } from './catalog';
 import { applyImageAdjust } from './adjust';
 import { GLYPH_FLAG, GLYPH_STRIDE, layoutForPage, type LayoutResult } from './compose';
+import { applyLookFraming, applyLookLight, applyLookTone, pageLook, type PageVariation } from './variation';
 
 export interface RenderInput {
   engine: HandwritingEngine;
@@ -30,6 +31,7 @@ export interface RenderInput {
   /** Per-page paper images keyed by `pageImageKey`. */
   images: Record<string, HTMLImageElement>;
   pageAdjust?: Record<number, ImageAdjust>;
+  pageVariation?: Record<number, PageVariation>;
 }
 
 export function pageImageKey(paper: PaperChoice): string | null {
@@ -630,6 +632,12 @@ export interface RenderOptions {
   activeGuide?: ActiveGuide;
   fast?: boolean;
   diagrams?: LoadedDiagram[];
+  /**
+   * Bake the page-variation crop/zoom/tilt into the canvas. Exports set this;
+   * the preview leaves it off and applies the same transform with CSS so the
+   * drag overlays stay aligned with the text.
+   */
+  frame?: boolean;
 }
 
 const hashView = new DataView(new ArrayBuffer(4));
@@ -656,6 +664,8 @@ export function pageSignature(input: RenderInput, page: number, base: string): s
   if (ov) h = mixString(h, JSON.stringify(ov));
   const pageAdj = input.pageAdjust?.[page];
   if (pageAdj) h = mixString(h, JSON.stringify(pageAdj));
+  const pageVar = input.pageVariation?.[page];
+  if (pageVar) h = mixString(h, `var|${JSON.stringify(pageVar)}`);
   const own = input.pagePapers?.[page];
   if (own) {
     const img = resolvePaper(input, page).photo;
@@ -739,6 +749,19 @@ export function renderPage(input: RenderInput, page: number, opts: RenderOptions
     const img = ctx.getImageData(0, 0, out.width, out.height);
     applyImageAdjust(img, adj, !opts.fast || opts.activeGuide === 'adjust');
     ctx.putImageData(img, 0, 0);
+  }
+
+  const look = pageLook(s.variation, s.variationSeed ?? 0, input.pageVariation?.[page], page, size.width, size.height);
+  if (look) {
+    if (opts.frame) {
+      const flat = makeCanvas(out.width, out.height);
+      flat.getContext('2d')!.drawImage(out, 0, 0);
+      applyLookFraming(ctx, flat, look);
+    }
+    const img = ctx.getImageData(0, 0, out.width, out.height);
+    applyLookTone(img, look, !opts.fast);
+    ctx.putImageData(img, 0, 0);
+    applyLookLight(ctx, look, scale, !opts.fast);
   }
 
   const ag = opts.activeGuide ?? null;

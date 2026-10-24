@@ -150,6 +150,7 @@ export function useHandwritingPages(
             pagePapers: cur.doc.pagePapers,
             images: cur.images,
             pageAdjust: cur.doc.pageAdjust,
+            pageVariation: cur.doc.pageVariation,
           };
 
           const base = [
@@ -230,6 +231,7 @@ export function useHandwritingPages(
           pagePapers: doc.pagePapers,
           images,
           pageAdjust: doc.pageAdjust,
+          pageVariation: doc.pageVariation,
         };
 
         const base = [

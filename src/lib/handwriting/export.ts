@@ -39,7 +39,7 @@ export async function exportAssignment(
   const name = safeName(s);
   const render = async (page: number, i: number) => {
     await yieldFrame();
-    const c = renderPage(input, page, { scale, diagrams });
+    const c = renderPage(input, page, { scale, diagrams, frame: true });
     onProgress?.(i + 1, pages.length);
     return c;
   };
