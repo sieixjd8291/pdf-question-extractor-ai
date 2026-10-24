@@ -9,13 +9,14 @@ import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } f
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
-import { detectRuling, fitLayoutToRuling, layoutFromRuling, layoutsDiffer, type DetectedRuling } from '../../lib/handwriting/detectLines';
+import { detectRuling, layoutFromRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
+import { docOnLines } from '../../lib/handwriting/snapLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
 import { PaperPicker } from './PaperPicker';
 import { PageCanvas } from './PageCanvas';
-import { TextArrangeLayer, blocksForMode, clampDelta, selectionBounds, shiftedOffsets, snapOffsetY, type MarginBox } from './TextArrangeLayer';
+import { TextArrangeLayer, blocksForMode, clampDelta, selectionBounds, shiftedOffsets, type MarginBox } from './TextArrangeLayer';
 import { TextPanel } from './TextPanel';
 import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
@@ -97,7 +98,40 @@ export function AssignmentMaker() {
   const pagesRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>([0]));
   const getVisiblePages = useCallback(() => [...visiblePages.current].sort((a, b) => a - b), []);
-  const pages = useHandwritingPages(engine, doc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide);
+  const rulingCache = useRef(new WeakMap<HTMLImageElement, { size: string; ruling: DetectedRuling | null }>());
+  const rulingForImage = useCallback(
+    (img: HTMLImageElement): DetectedRuling | null => {
+      const sizeKey = `${size.width}x${size.height}`;
+      const cached = rulingCache.current.get(img);
+      if (cached && cached.size === sizeKey) return cached.ruling;
+      const ruling = detectRuling(img, size.width, size.height);
+      rulingCache.current.set(img, { size: sizeKey, ruling });
+      return ruling;
+    },
+    [size.width, size.height],
+  );
+  /** Ruling of a page's own paper; page -1 means the document paper. */
+  const rulingForPage = useCallback(
+    (page: number): DetectedRuling | null => {
+      if (!s.snapToLines) return null;
+      const paper = page < 0 ? s.paper : paperForPage(s, doc.pagePapers, page);
+      if (!paper || paper.kind === 'template') return null;
+      const own = page < 0 ? undefined : doc.pagePapers[page];
+      if (own && !samePaper(own, s.paper)) {
+        const key = pageImageKey(own);
+        const img = key ? pageImages[key] : null;
+        return img ? rulingForImage(img) : null;
+      }
+      return photo ? rulingForImage(photo) : null;
+    },
+    [s, doc.pagePapers, pageImages, photo, rulingForImage],
+  );
+  const drawnDoc = useMemo(
+    () => docOnLines(doc, rulingForPage, (page) => paperForPage(s, doc.pagePapers, page)?.kind === 'template'),
+    [doc, s, rulingForPage],
+  );
+  const drawn = drawnDoc.settings;
+  const pages = useHandwritingPages(engine, drawnDoc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
 
   const [arrangeMode, setArrangeMode] = useState<ArrangeMode>('line');
@@ -125,13 +159,13 @@ export function AssignmentMaker() {
   };
   const movedCount = Object.keys(doc.textOffsets).length;
   const marginBoxFor = (page: number): MarginBox => {
-    const L = layoutForPage(s, doc.overrides, page);
+    const L = layoutForPage(drawn, drawnDoc.overrides, page);
     return { left: L.marginLeft, top: L.marginTop - L.lineHeight, right: size.width - L.marginRight, bottom: size.height - L.marginBottom };
   };
 
   const lineStepRef = useRef<(page: number) => number | null>(() => null);
-  const nudgeRef = useRef({ sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) });
-  nudgeRef.current = { sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: doc.textOffsets, box: marginBoxFor(arrangeSel.page) };
+  const nudgeRef = useRef({ sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: drawnDoc.textOffsets, box: marginBoxFor(arrangeSel.page) });
+  nudgeRef.current = { sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: drawnDoc.textOffsets, box: marginBoxFor(arrangeSel.page) };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const { sel, mode, input, offsets, box } = nudgeRef.current;
@@ -477,88 +511,16 @@ export function AssignmentMaker() {
     }
   };
 
-  const rulingCache = useRef(new WeakMap<HTMLImageElement, { size: string; ruling: DetectedRuling | null }>());
-  const rulingForPage = (page: number): DetectedRuling | null => {
-    if (!s.snapToLines) return null;
-    const paper = paperForPage(s, doc.pagePapers, page);
-    if (!paper || paper.kind === 'template') return null;
-    const own = doc.pagePapers[page];
-    const imgKey = own && !samePaper(own, s.paper) ? pageImageKey(own) : null;
-    const img = own && !samePaper(own, s.paper) ? (imgKey ? pageImages[imgKey] : null) : photo;
-    if (!img) return null;
-    const sizeKey = `${size.width}x${size.height}`;
-    const cached = rulingCache.current.get(img);
-    if (cached && cached.size === sizeKey) return cached.ruling;
-    const ruling = detectRuling(img, size.width, size.height);
-    rulingCache.current.set(img, { size: sizeKey, ruling });
-    return ruling;
-  };
-
-  const setPageLayout = (page: number, layout: PageLayout) => {
-    const ruling = rulingForPage(page);
-    setOverride(page, ruling ? fitLayoutToRuling(ruling, layout, size.height) : layout);
-  };
+  const setPageLayout = (page: number, layout: PageLayout) => setOverride(page, layout);
 
   /** Line pitch a page's text must move in so it stays on the rules, or null when free. */
   const lineStepFor = (page: number): number | null => {
     const paper = paperForPage(s, doc.pagePapers, page);
     if (!paper) return null;
-    if (paper.kind === 'template') return layoutForPage(s, doc.overrides, page).lineHeight;
-    return rulingForPage(page) ? layoutForPage(s, doc.overrides, page).lineHeight : null;
+    if (paper.kind !== 'template' && !rulingForPage(page)) return null;
+    return layoutForPage(drawn, drawnDoc.overrides, page).lineHeight;
   };
   lineStepRef.current = lineStepFor;
-
-  // With "Write within the lines" on, every page — whatever paper, layout or look it
-  // has — keeps its spacing, first line and tilt on its own ruling, and any moved
-  // text sits on whole lines.
-  useEffect(() => {
-    if (!s.snapToLines && !Object.values(doc.pagePapers).some((p) => p.kind === 'template') && s.paper?.kind !== 'template') return;
-    const overridePatch: Record<number, PageLayout> = {};
-    if (s.snapToLines) {
-      for (const [key, layout] of Object.entries(doc.overrides)) {
-        const page = Number(key);
-        const ruling = rulingForPage(page);
-        if (!ruling) continue;
-        const fit = fitLayoutToRuling(ruling, layout, size.height);
-        if (layoutsDiffer(fit, layout)) overridePatch[page] = fit;
-      }
-    }
-    const offsetPatch: Record<string, TextOffset> = {};
-    for (const [id, o] of Object.entries(doc.textOffsets)) {
-      const page = Number(/^p(\d+)/.exec(id)?.[1]);
-      if (!Number.isFinite(page)) continue;
-      const step = overridePatch[page]?.lineHeight ?? lineStepFor(page);
-      if (!step) continue;
-      const y = snapOffsetY(o.y, step);
-      if (Math.abs(y - o.y) > 0.05) offsetPatch[id] = { x: o.x, y };
-    }
-    let docLayout: PageLayout | null = null;
-    if (s.snapToLines && photo && s.paper && s.paper.kind !== 'template') {
-      const sizeKey = `${size.width}x${size.height}`;
-      const cached = rulingCache.current.get(photo);
-      const ruling = cached && cached.size === sizeKey ? cached.ruling : detectRuling(photo, size.width, size.height);
-      if (!cached || cached.size !== sizeKey) rulingCache.current.set(photo, { size: sizeKey, ruling });
-      if (ruling) {
-        const fit = fitLayoutToRuling(ruling, s.layout, size.height);
-        if (layoutsDiffer(fit, s.layout)) docLayout = fit;
-      }
-    }
-    if (!Object.keys(overridePatch).length && !Object.keys(offsetPatch).length && !docLayout) return;
-    update((d) => {
-      const textOffsets = { ...d.textOffsets };
-      for (const [id, o] of Object.entries(offsetPatch)) {
-        if (Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05) delete textOffsets[id];
-        else textOffsets[id] = o;
-      }
-      return {
-        ...d,
-        settings: docLayout ? { ...d.settings, layout: docLayout } : d.settings,
-        overrides: { ...d.overrides, ...overridePatch },
-        textOffsets,
-      };
-    }, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.snapToLines, s.paper, s.layout, doc.overrides, doc.pagePapers, doc.textOffsets, photo, pageImages, size.width, size.height, update]);
 
   const rerollAllLooks = useCallback(
     () =>

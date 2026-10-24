@@ -103,17 +103,14 @@ export function LayoutPanel({
   onAllNoVariation: (off: boolean) => void;
 }) {
   const variationOff = (s.variation ?? 'off') === 'off';
-  const breaksSnap = (patch: Partial<PageLayout>) =>
-    s.snapToLines && rulingStatus === 'detected' && ('lineHeight' in patch || 'marginTop' in patch || 'marginBottom' in patch);
-  const setLayout = (patch: Partial<PageLayout>) =>
-    onSettings({ layout: { ...s.layout, ...patch }, ...(breaksSnap(patch) ? { snapToLines: false } : {}) });
+  const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   const isTemplate = rulingStatus === 'template';
   const snapDescription = isTemplate
     ? 'Template rules are drawn from your line height, so text always sits on them'
     : !s.snapToLines
       ? 'Detect the ruled lines on the paper photo and write on them'
       : rulingStatus === 'detected'
-        ? 'Ruled lines detected — text is aligned to the paper, and pages with a different paper adjust on their own'
+        ? 'Ruled lines detected — sliders stay free and text lands on the nearest printed line on every page. Line height picks every line, every other line, and so on'
         : rulingStatus === 'none'
           ? 'No ruled lines found on this paper — adjust the sliders manually'
           : 'Detecting ruled lines…';
@@ -166,7 +163,7 @@ export function LayoutPanel({
             key={p.id}
             type="button"
             className={`am-chip-btn${s.layout.lineHeight === p.layout.lineHeight ? ' active' : ''}`}
-            onClick={() => onSettings({ layout: { ...s.layout, ...p.layout }, fontSize: p.fontSize, ...(breaksSnap(p.layout) ? { snapToLines: false } : {}) })}
+            onClick={() => onSettings({ layout: { ...s.layout, ...p.layout }, fontSize: p.fontSize })}
           >
             {p.label}
           </button>
