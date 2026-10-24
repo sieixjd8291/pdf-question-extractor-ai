@@ -470,6 +470,18 @@ export function computePageNumberPlacement(
   return { x, y, w: textWidth, h: fontPx, baseX, baseY };
 }
 
+/** Sets the transform to (x, y) with the whole page rotated about the first-line/left-margin pivot. */
+function applyPageSlant(ctx: CanvasRenderingContext2D, slant: { rad: number; px: number; py: number }, x: number, y: number) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (slant.rad === 0) {
+    ctx.translate(x, y);
+    return;
+  }
+  ctx.translate(slant.px, slant.py);
+  ctx.rotate(slant.rad);
+  ctx.translate(x - slant.px, y - slant.py);
+}
+
 function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean): { ink: HTMLCanvasElement; pageNumBox: PageNumberBox | null } {
   const { settings: s, layout, units, fontA, fontB } = input;
   const size = PAGE_SIZES[s.pageSize];
@@ -483,6 +495,12 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
   ctx.lineCap = 'round';
   ctx.textBaseline = 'alphabetic';
   const g = layout.glyphs;
+  const pageLayout = layoutForPage(s, input.overrides, page);
+  const pageSlant = {
+    rad: ((pageLayout.angle ?? 0) * Math.PI) / 180,
+    px: pageLayout.marginLeft * scale,
+    py: pageLayout.marginTop * scale,
+  };
   let currentFont = '';
   const strokeW = s.fontSize * pen.strokeWidth * scale;
   for (const idx of layout.glyphsByPage[page] ?? []) {
@@ -496,7 +514,7 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
       ctx.font = font;
       currentFont = font;
     }
-    ctx.setTransform(1, 0, 0, 1, g[o + 2] * scale, g[o + 3] * scale);
+    applyPageSlant(ctx, pageSlant, g[o + 2] * scale, g[o + 3] * scale);
     ctx.rotate(g[o + 4]);
     ctx.transform(1, 0, g[o + 8], 1, 0, 0);
     ctx.globalAlpha = g[o + 7];
@@ -512,7 +530,7 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
       ctx.strokeText(unit, 0, 0);
     }
   }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  applyPageSlant(ctx, pageSlant, 0, 0);
   ctx.globalAlpha = Math.min(1, s.inkOpacity * 1.02);
   for (const st of layout.strokes) {
     if (st.page !== page) continue;

@@ -161,7 +161,9 @@ export function AssignmentMaker() {
     setRulingStatus('detected');
     const cur = layoutRef.current;
     const next = layoutFromRuling(ruling, cur, size.height);
-    const changed = (Object.keys(next) as Array<keyof PageLayout>).some((k) => Math.abs(next[k] - cur[k]) > 0.5);
+    const changed =
+      Math.abs((next.angle ?? 0) - (cur.angle ?? 0)) > 0.1 ||
+      (['marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'lineHeight'] as const).some((k) => Math.abs(next[k] - cur[k]) > 0.5);
     const ratio = fontSizeRef.current / next.lineHeight;
     const patch: Partial<typeof s> = {};
     if (changed) patch.layout = next;

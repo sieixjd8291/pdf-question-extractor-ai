@@ -8,6 +8,11 @@ export interface DetectedRuling {
   lastLine: number;
   /** Vertical margin rule (usually red), in page units, if found. */
   marginRule: number | null;
+  /** Slant of the ruling in degrees (positive = descends to the right). */
+  angle: number;
+  slope: number;
+  /** Page x at which `firstLine`/`lastLine` were measured. */
+  centerX: number;
 }
 
 const SAMPLE_W = 620;
@@ -82,12 +87,21 @@ export function detectRuling(img: HTMLImageElement, pageW: number, pageH: number
   };
   let profile = buildProfile(0).prof;
   let bestEnergy = -1;
-  for (let slope = -0.04; slope <= 0.0401; slope += 0.005) {
+  let bestSlope = 0;
+  const trySlope = (slope: number) => {
     const cand = buildProfile(slope);
     if (cand.energy > bestEnergy) {
       bestEnergy = cand.energy;
+      bestSlope = slope;
       profile = cand.prof;
     }
+  };
+  for (let slope = -0.08; slope <= 0.0801; slope += 0.005) trySlope(slope);
+  const coarse = bestSlope;
+  for (let slope = coarse - 0.005; slope <= coarse + 0.0051; slope += 0.001) trySlope(slope);
+  if (Math.abs(bestSlope) < 0.003) {
+    bestSlope = 0;
+    profile = buildProfile(0).prof;
   }
 
   // Coarse period from autocorrelation; prefer the smallest strong lag to avoid harmonics.
@@ -175,17 +189,23 @@ export function detectRuling(img: HTMLImageElement, pageW: number, pageH: number
     firstLine: strong[0].y * f,
     lastLine: strong[strong.length - 1].y * f,
     marginRule,
+    angle: Number(((Math.atan(bestSlope) * 180) / Math.PI).toFixed(2)),
+    slope: bestSlope,
+    centerX: xc * f,
   };
 }
 
 /** Converts detected ruling into a page layout that writes on the printed lines. */
 export function layoutFromRuling(ruling: DetectedRuling, current: PageLayout, pageH: number): PageLayout {
-  const marginTop = ruling.firstLine;
+  const marginLeft = ruling.marginRule !== null ? Math.round(ruling.marginRule + 14) : current.marginLeft;
+  // Text is rotated about (marginLeft, marginTop), so measure the first line where it crosses the left margin.
+  const marginTop = ruling.firstLine + ruling.slope * (marginLeft - ruling.centerX);
   return {
-    marginLeft: ruling.marginRule !== null ? Math.round(ruling.marginRule + 14) : current.marginLeft,
+    marginLeft,
     marginRight: current.marginRight,
     marginTop: Math.round(marginTop * 10) / 10,
     marginBottom: Math.max(10, Math.floor(pageH - ruling.lastLine - 1)),
     lineHeight: ruling.lineHeight,
+    angle: ruling.angle,
   };
 }
