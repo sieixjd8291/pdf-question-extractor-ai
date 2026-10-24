@@ -222,13 +222,10 @@ export function snapLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, 
   const maxSteps = Math.max(0, Math.floor((lastAtMargin - firstAtMargin) / step));
   const topSteps = Math.min(maxSteps, Math.max(0, Math.round((desired.marginTop - firstAtMargin) / step)));
   const marginTop = firstAtMargin + topSteps * step;
-  const desiredLast = pageH - desired.marginBottom;
-  const lastSteps = Math.min(maxSteps, Math.max(topSteps, Math.round((desiredLast - firstAtMargin) / step)));
-  const lastLine = firstAtMargin + lastSteps * step;
   return {
     ...desired,
     marginTop: Math.round(marginTop * 10) / 10,
-    marginBottom: Math.max(10, Math.floor(pageH - lastLine - 1)),
+    marginBottom: Math.max(0, Math.min(pageH, desired.marginBottom)),
     lineHeight,
     angle: ruling.angle,
   };

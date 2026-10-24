@@ -56,8 +56,8 @@ export function LayoutFields({
       <SliderField
         label="Bottom margin"
         value={layout.marginBottom}
-        min={10}
-        max={500}
+        min={0}
+        max={1600}
         onChange={(v) => onChange({ marginBottom: v })}
         onDragChange={(d) => onActiveGuide?.(d ? 'marginBottom' : null)}
         format={(v) => `${v}px`}
