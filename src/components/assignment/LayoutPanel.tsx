@@ -45,8 +45,8 @@ export function LayoutFields({
       <SliderField
         label="First line (top)"
         value={layout.marginTop}
-        min={30}
-        max={700}
+        min={0}
+        max={1600}
         onChange={(v) => onChange({ marginTop: v })}
         onDragChange={(d) => onActiveGuide?.(d ? 'marginTop' : null)}
         format={(v) => `${v}px`}
@@ -67,8 +67,8 @@ export function LayoutFields({
       <SliderField
         label="Line height"
         value={layout.lineHeight}
-        min={24}
-        max={130}
+        min={10}
+        max={300}
         step={0.5}
         onChange={(v) => onChange({ lineHeight: v })}
         onDragChange={(d) => onActiveGuide?.(d ? 'lineHeight' : null)}
