@@ -6,7 +6,7 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
 import { PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, samePaper, stockLayout, type ActiveGuide, type Diagram, type HandwritingFont, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
-import { computePageNumberPlacement, formatPageNumber, loadImage, paperForPage, tintDiagram } from '../../lib/handwriting/render';
+import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { detectRuling, layoutFromRuling } from '../../lib/handwriting/detectLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
@@ -271,6 +271,37 @@ export function AssignmentMaker() {
       cancelled = true;
     };
   }, [pageStockKey, pageImages, toast]);
+
+  // With "Write within the lines" on, pages that use a different paper than the
+  // document get their own detected layout, so each page follows its own ruling.
+  const pageRulingDone = useRef(new Map<number, string>());
+  useEffect(() => {
+    if (!s.snapToLines) {
+      pageRulingDone.current.clear();
+      return;
+    }
+    const patches: Record<number, PageLayout> = {};
+    for (const [key, paper] of Object.entries(doc.pagePapers)) {
+      const page = Number(key);
+      if (samePaper(paper, s.paper) || paper.kind === 'template') {
+        pageRulingDone.current.delete(page);
+        continue;
+      }
+      const imgKey = pageImageKey(paper);
+      const img = imgKey ? pageImages[imgKey] : null;
+      if (!imgKey || !img) continue;
+      const stamp = `${imgKey}|${size.width}x${size.height}`;
+      if (pageRulingDone.current.get(page) === stamp) continue;
+      pageRulingDone.current.set(page, stamp);
+      const ruling = detectRuling(img, size.width, size.height);
+      if (!ruling) continue;
+      patches[page] = layoutFromRuling(ruling, layoutForPage(s, doc.overrides, page), size.height);
+    }
+    const pagesToPatch = Object.keys(patches);
+    if (!pagesToPatch.length) return;
+    update((d) => ({ ...d, overrides: { ...d.overrides, ...patches } }), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.snapToLines, s.paper, doc.pagePapers, pageImages, size.width, size.height, update]);
 
   const setPagePaper = useCallback(
     (page: number, paper: PaperChoice | null, layout?: PageLayout) => {
