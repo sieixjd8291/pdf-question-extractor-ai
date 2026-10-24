@@ -72,7 +72,7 @@ export function PageLayoutDialog({
           </p>
           {snapped && (
             <p className="am-help">
-              Write within the lines is on — text stays snapped to this page&apos;s ruled lines as you adjust.
+              Write within the lines is on — text keeps the tilt of this page&apos;s ruled lines as you adjust.
             </p>
           )}
           <LayoutFields

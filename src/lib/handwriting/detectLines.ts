@@ -211,22 +211,13 @@ export function layoutFromRuling(ruling: DetectedRuling, current: PageLayout, pa
 }
 
 /**
- * Keeps a user-edited layout on the printed lines: margins stay where the user
- * put them, while the first line, bottom edge and line spacing snap to the ruling.
+ * Keeps a user-edited layout aligned with the printed lines' tilt while leaving
+ * every slider value exactly where the user dragged it.
  */
 export function snapLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
-  const step = ruling.lineHeight;
-  const lineHeight = step * Math.max(1, Math.round(desired.lineHeight / step));
-  const firstAtMargin = ruling.firstLine + ruling.slope * (desired.marginLeft - ruling.centerX);
-  const lastAtMargin = ruling.lastLine + ruling.slope * (desired.marginLeft - ruling.centerX);
-  const maxSteps = Math.max(0, Math.floor((lastAtMargin - firstAtMargin) / step));
-  const topSteps = Math.min(maxSteps, Math.max(0, Math.round((desired.marginTop - firstAtMargin) / step)));
-  const marginTop = firstAtMargin + topSteps * step;
   return {
     ...desired,
-    marginTop: Math.round(marginTop * 10) / 10,
     marginBottom: Math.max(0, Math.min(pageH, desired.marginBottom)),
-    lineHeight,
     angle: ruling.angle,
   };
 }
