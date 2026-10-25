@@ -176,24 +176,65 @@ export function mergePieces(ink: InkMap, a: Piece, b: Piece): Piece {
   return measure(ink, [...a.parts, ...b.parts]);
 }
 
+/** Thinnest ink column (relative to piece.x0) within [from, to], preferring columns near `target`. */
+function thinnestColumn(cols: Uint32Array, from: number, to: number, target: number): number {
+  const peak = Math.max(1, ...cols);
+  let best = Math.round(target);
+  let bestScore = Infinity;
+  for (let i = Math.max(1, from); i <= to && i < cols.length - 1; i++) {
+    const score = cols[i] / peak + (Math.abs(i - target) / Math.max(1, to - from)) * 0.35;
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return best;
+}
+
 /** Splits at the thinnest ink column in the middle half of the piece. */
 export function splitPiece(ink: InkMap, piece: Piece): [Piece, Piece] | null {
   const width = piece.x1 - piece.x0 + 1;
   if (width < 4) return null;
   const cols = columnInk(ink, piece);
-  const from = Math.floor(width * 0.25);
-  const to = Math.ceil(width * 0.75);
-  const mid = width / 2;
-  let bestCol = Math.round(mid);
-  let bestScore = Infinity;
-  for (let i = from; i <= to && i < width; i++) {
-    const score = cols[i] + Math.abs(i - mid) * 0.02;
-    if (score < bestScore) {
-      bestScore = score;
-      bestCol = i;
-    }
+  const bestCol = thinnestColumn(cols, Math.floor(width * 0.25), Math.ceil(width * 0.75), width / 2);
+  return cutPiece(ink, piece, piece.x0 + bestCol);
+}
+
+/** Relative letter widths, so joined writing is cut where narrow and wide letters really end. */
+function letterWeight(ch: string): number {
+  if ('ijl.,:;!\'|'.includes(ch)) return 0.45;
+  if ('frtI1()[]'.includes(ch)) return 0.7;
+  if ('mwMW'.includes(ch)) return 1.5;
+  if (/[A-Z]/.test(ch)) return 1.15;
+  return 1;
+}
+
+/** Splits a piece holding several joined letters into one piece per letter. */
+function splitIntoLetters(ink: InkMap, piece: Piece, letters: string[]): Piece[] {
+  if (letters.length < 2) return [piece];
+  const width = piece.x1 - piece.x0 + 1;
+  if (width < letters.length * 2) return [piece];
+  const weights = letters.map(letterWeight);
+  const total = weights.reduce((a, b) => a + b, 0);
+  const cols = columnInk(ink, piece);
+  const out: Piece[] = [];
+  let rest = piece;
+  let acc = 0;
+  for (let i = 0; i < letters.length - 1; i++) {
+    acc += weights[i];
+    const target = (acc / total) * width;
+    const reach = ((Math.min(weights[i], weights[i + 1]) / total) * width) * 0.45;
+    const col = thinnestColumn(cols, Math.floor(target - reach), Math.ceil(target + reach), target);
+    const halves = cutPiece(ink, rest, piece.x0 + col);
+    if (!halves) continue;
+    out.push(halves[0]);
+    rest = halves[1];
   }
-  const cut = piece.x0 + bestCol;
+  out.push(rest);
+  return out;
+}
+
+function cutPiece(ink: InkMap, piece: Piece, cut: number): [Piece, Piece] | null {
   const left: PiecePart[] = [];
   const right: PiecePart[] = [];
   for (const p of piece.parts) {
@@ -206,7 +247,47 @@ export function splitPiece(ink: InkMap, piece: Piece): [Piece, Piece] | null {
   return [a, b];
 }
 
-export function clusterRow(ink: InkMap, compIds: number[]): Piece[] {
+const HIGH_MARK_CHARS = /['"`^*°‘’“”]/;
+
+/**
+ * Folds small marks that sit above a letter (i/j dots, accents) into that letter.
+ * Handwritten dots often drift sideways off the stem, so the overlap test in
+ * clusterRow misses them and they would otherwise become an extra "letter".
+ */
+function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
+  if (pieces.length < 2) return pieces;
+  const areaMedian = median(pieces.map((p) => p.area));
+  const widthMedian = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
+  // A text with apostrophes or quotes has real standalone high marks, so only
+  // attach marks that actually overlap a letter horizontally.
+  const maxGap = HIGH_MARK_CHARS.test(text) ? 0 : widthMedian * 0.35;
+  const isMark = (p: Piece) => p.area < areaMedian * 0.25;
+  const out = [...pieces];
+  for (let i = 0; i < out.length; i++) {
+    const p = out[i];
+    if (!isMark(p)) continue;
+    let best = -1;
+    let bestGap = Infinity;
+    for (let j = 0; j < out.length; j++) {
+      const q = out[j];
+      if (j === i || q.area < p.area * 1.8) continue;
+      const qh = q.y1 - q.y0 + 1;
+      if (p.y1 > q.y0 + qh * 0.35) continue;
+      const gap = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1));
+      if (gap <= maxGap && gap < bestGap) {
+        bestGap = gap;
+        best = j;
+      }
+    }
+    if (best < 0) continue;
+    out[best] = mergePieces(ink, out[best], p);
+    out.splice(i, 1);
+    i = -1;
+  }
+  return out.sort((a, b) => a.x0 - b.x0);
+}
+
+export function clusterRow(ink: InkMap, compIds: number[], text = ''): Piece[] {
   const comps = compIds.map((id) => ({ id, c: ink.components[id - 1] })).sort((p, q) => p.c.x0 - q.c.x0);
   const parent = comps.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
@@ -227,10 +308,50 @@ export function clusterRow(ink: InkMap, compIds: number[]): Piece[] {
     list.push({ comp: p.id, cut0: -Infinity, cut1: Infinity });
     groups.set(root, list);
   });
-  return [...groups.values()].map((parts) => measure(ink, parts)).sort((a, b) => a.x0 - b.x0);
+  const pieces = [...groups.values()].map((parts) => measure(ink, parts)).sort((a, b) => a.x0 - b.x0);
+  return attachMarks(ink, pieces, text);
 }
 
-function fitWord(ink: InkMap, group: Piece[], count: number): Piece[] {
+/**
+ * Gives each piece a consecutive run of letters so piece widths best match the
+ * letters' expected widths, then cuts every multi-letter piece apart.
+ */
+function distributeLetters(ink: InkMap, pieces: Piece[], letters: string[]): Piece[] {
+  const m = pieces.length;
+  const n = letters.length;
+  const widths = pieces.map((p) => p.x1 - p.x0 + 1);
+  const weights = letters.map(letterWeight);
+  const unit = widths.reduce((a, b) => a + b, 0) / weights.reduce((a, b) => a + b, 0);
+  const prefix = [0];
+  for (const w of weights) prefix.push(prefix[prefix.length - 1] + w);
+
+  const cost: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(Infinity));
+  const from: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(-1));
+  cost[0][0] = 0;
+  for (let i = 1; i <= m; i++) {
+    for (let j = i; j <= n - (m - i); j++) {
+      for (let s = i - 1; s < j; s++) {
+        const prev = cost[i - 1][s];
+        if (prev === Infinity) continue;
+        const expected = (prefix[j] - prefix[s]) * unit;
+        const c = prev + ((widths[i - 1] - expected) / unit) ** 2;
+        if (c < cost[i][j]) {
+          cost[i][j] = c;
+          from[i][j] = s;
+        }
+      }
+    }
+  }
+  const bounds = [n];
+  for (let i = m, j = n; i > 0; i--) {
+    j = from[i][j];
+    bounds.unshift(j);
+  }
+  return pieces.flatMap((p, i) => splitIntoLetters(ink, p, letters.slice(bounds[i], bounds[i + 1])));
+}
+
+function fitWord(ink: InkMap, group: Piece[], letters: string[]): Piece[] {
+  const count = letters.length;
   const pieces = [...group];
   const letterWidth = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
   while (pieces.length > count && pieces.length > 1) {
@@ -248,26 +369,29 @@ function fitWord(ink: InkMap, group: Piece[], count: number): Piece[] {
     }
     pieces.splice(best, 2, mergePieces(ink, pieces[best], pieces[best + 1]));
   }
+  if (pieces.length >= count || !pieces.length) return pieces;
+  const split = distributeLetters(ink, pieces, letters);
   let guard = 0;
-  while (pieces.length < count && guard++ < 400) {
+  while (split.length < count && guard++ < 400) {
     let widest = 0;
-    for (let i = 1; i < pieces.length; i++) {
-      if (pieces[i].x1 - pieces[i].x0 > pieces[widest].x1 - pieces[widest].x0) widest = i;
+    for (let i = 1; i < split.length; i++) {
+      if (split[i].x1 - split[i].x0 > split[widest].x1 - split[widest].x0) widest = i;
     }
-    const halves = splitPiece(ink, pieces[widest]);
+    const halves = splitPiece(ink, split[widest]);
     if (!halves) break;
-    pieces.splice(widest, 1, ...halves);
+    split.splice(widest, 1, ...halves);
   }
-  return pieces;
+  return split;
 }
 
 /** Matches pieces of one line of writing to the words of one line of text. */
 function autoAssign(ink: InkMap, pieces: Piece[], text: string): Piece[] {
-  const words = text.split(/\s+/).filter(Boolean).map((w) => Array.from(w).length);
+  const wordLetters = text.split(/\s+/).filter(Boolean).map((w) => Array.from(w));
+  const words = wordLetters.map((w) => w.length);
   const k = pieces.length;
   const W = words.length;
   if (!k || !W) return pieces;
-  if (W === 1 || k < W) return fitWord(ink, pieces, words.reduce((a, b) => a + b, 0));
+  if (W === 1 || k < W) return fitWord(ink, pieces, wordLetters.flat());
 
   // gapBefore[i]: clear space between piece i and everything to its left, in letter widths.
   const letterWidth = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
@@ -303,8 +427,84 @@ function autoAssign(ink: InkMap, pieces: Piece[], text: string): Piece[] {
     bounds.unshift(end);
   }
   const out: Piece[] = [];
-  for (let w = 0; w < W; w++) out.push(...fitWord(ink, pieces.slice(bounds[w], bounds[w + 1]), words[w]));
+  for (let w = 0; w < W; w++) out.push(...fitWord(ink, pieces.slice(bounds[w], bounds[w + 1]), wordLetters[w]));
   return out;
+}
+
+interface Band { y0: number; y1: number }
+
+/**
+ * Rows of writing from the vertical ink profile. Thin bands (i dots and accents
+ * floating above a line without ascenders) are folded into their nearest line.
+ */
+function findLineBands(profile: Uint32Array): Band[] {
+  const bands: Band[] = [];
+  for (let y = 0; y < profile.length; y++) {
+    if (!profile[y]) continue;
+    const y0 = y;
+    while (y < profile.length && profile[y]) y++;
+    bands.push({ y0, y1: y - 1 });
+  }
+  const height = (b: Band) => b.y1 - b.y0 + 1;
+  while (bands.length > 1) {
+    const tallest = Math.max(...bands.map(height));
+    const thin = bands.findIndex((b) => height(b) < tallest * 0.4);
+    if (thin < 0) break;
+    const above = thin > 0 ? bands[thin].y0 - bands[thin - 1].y1 : Infinity;
+    const below = thin < bands.length - 1 ? bands[thin + 1].y0 - bands[thin].y1 : Infinity;
+    const other = above <= below ? thin - 1 : thin + 1;
+    const lo = Math.min(thin, other);
+    bands.splice(lo, 2, { y0: bands[lo].y0, y1: bands[lo + 1].y1 });
+  }
+  return bands;
+}
+
+/** Number of image columns that contain ink from these components. */
+function inkCoverage(ink: InkMap, ids: number[]): number {
+  const cols = new Uint8Array(ink.width);
+  for (const id of ids) {
+    const c = ink.components[id - 1];
+    cols.fill(1, c.x0, c.x1 + 1);
+  }
+  return cols.reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Splits the typed words into one line per row of writing, so a sentence typed
+ * on a single line still matches writing that wraps onto several lines.
+ */
+function spreadWords(words: string[], coverage: number[]): string[] | null {
+  const R = coverage.length;
+  const N = words.length;
+  if (N < R) return null;
+  const totalCov = coverage.reduce((a, b) => a + b, 0) || 1;
+  // A space costs roughly one letter of width.
+  const lens = words.map((w) => Array.from(w).length + 1);
+  const prefix = [0];
+  for (const l of lens) prefix.push(prefix[prefix.length - 1] + l);
+  const total = prefix[N];
+  const cost: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(Infinity));
+  const from: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(-1));
+  cost[0][0] = 0;
+  for (let r = 1; r <= R; r++) {
+    for (let end = r; end <= N - (R - r); end++) {
+      for (let start = r - 1; start < end; start++) {
+        const prev = cost[r - 1][start];
+        if (prev === Infinity) continue;
+        const c = prev + ((prefix[end] - prefix[start]) / total - coverage[r - 1] / totalCov) ** 2;
+        if (c < cost[r][end]) {
+          cost[r][end] = c;
+          from[r][end] = start;
+        }
+      }
+    }
+  }
+  const bounds = [N];
+  for (let r = R, end = N; r > 0; r--) {
+    end = from[r][end];
+    bounds.unshift(end);
+  }
+  return Array.from({ length: R }, (_, r) => words.slice(bounds[r], bounds[r + 1]).join(' '));
 }
 
 export function segmentSample(ink: InkMap, text: string): Segmentation {
@@ -318,47 +518,45 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
     const c = ink.components[id - 1];
     for (let y = c.y0; y <= c.y1; y++) profile[y]++;
   }
-  let first = 0;
-  while (first < ink.height && !profile[first]) first++;
-  let last = ink.height - 1;
-  while (last > 0 && !profile[last]) last--;
-
-  const separators: number[] = [];
-  if (lines.length > 1) {
-    const gaps: { mid: number; size: number }[] = [];
-    let y = first;
-    while (y <= last) {
-      if (profile[y]) {
-        y++;
-        continue;
-      }
-      const start = y;
-      while (y <= last && !profile[y]) y++;
-      gaps.push({ mid: (start + y) / 2, size: y - start });
-    }
-    if (gaps.length < lines.length - 1) {
-      return {
-        rows: [],
-        error: `Found ${gaps.length + 1} line${gaps.length ? 's' : ''} of writing but your text has ${lines.length}. Leave clear space between lines, or match the line breaks.`,
-      };
-    }
-    gaps.sort((a, b) => b.size - a.size);
-    separators.push(...gaps.slice(0, lines.length - 1).map((g) => g.mid).sort((a, b) => a - b));
+  const bands = findLineBands(profile);
+  if (lines.length > bands.length) {
+    return {
+      rows: [],
+      error: `Found ${bands.length} line${bands.length === 1 ? '' : 's'} of writing but your text has ${lines.length}. Leave clear space between lines, or match the line breaks.`,
+    };
   }
 
-  const buckets: number[][] = lines.map(() => []);
+  const buckets: number[][] = bands.map(() => []);
   for (const id of valid) {
     const c = ink.components[id - 1];
     const cy = (c.y0 + c.y1) / 2;
     let row = 0;
-    while (row < separators.length && cy > separators[row]) row++;
+    let bestDist = Infinity;
+    bands.forEach((b, i) => {
+      const d = cy < b.y0 ? b.y0 - cy : cy > b.y1 ? cy - b.y1 : 0;
+      if (d < bestDist) {
+        bestDist = d;
+        row = i;
+      }
+    });
     buckets[row].push(id);
+  }
+
+  if (lines.length < bands.length) {
+    const spread = spreadWords(lines.join(' ').split(/\s+/).filter(Boolean), buckets.map((ids) => inkCoverage(ink, ids)));
+    if (!spread) {
+      return {
+        rows: [],
+        error: `Found ${bands.length} lines of writing but your text has fewer words than that. Check the text matches the image.`,
+      };
+    }
+    lines.splice(0, lines.length, ...spread);
   }
 
   const rows = lines.map((line, i) => ({
     text: line,
     letters: lettersOf(line),
-    pieces: autoAssign(ink, clusterRow(ink, buckets[i]), line),
+    pieces: autoAssign(ink, clusterRow(ink, buckets[i], line), line),
   }));
   return { rows };
 }

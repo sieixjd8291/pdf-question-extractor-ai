@@ -504,6 +504,10 @@
 
 /* ---------- Font panel ---------- */
 .am-font-current { display: flex; flex-direction: column; gap: 8px; }
+.am-font-slot { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--canvas); }
+.am-font-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.am-font-sources .btn { min-width: 0; padding-inline: 8px; white-space: nowrap; }
+.am-font-slot-title { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--secondary); }
 .am-font-trigger {
   display: flex;
   align-items: center;

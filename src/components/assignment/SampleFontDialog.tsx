@@ -184,7 +184,7 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
       {current ? (
         <>
           <label className="am-sf-field">
-            <span>What does it say? Put each line of writing on its own line.</span>
+            <span>What does it say? Lines of writing are detected automatically.</span>
             <textarea className="am-textarea am-sf-text" value={current.text} onChange={(e) => setText(e.target.value)} rows={2} spellCheck={false} />
           </label>
 
@@ -194,7 +194,7 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
             <ul className="am-sf-rows" aria-live="polite">
               {current.rows.map((row, r) => (
                 <li key={r} className={`am-sf-status ${rowMatched(row) ? 'ok' : 'off'}`}>
-                  Line {r + 1}: {row.pieces.length} pieces found for {row.letters.length} letters
+                  Line {r + 1} “{row.text}”: {row.pieces.length} pieces found for {row.letters.length} letters
                   {rowMatched(row) ? ' — matched' : ' — click a box to merge, split or remove it'}
                 </li>
               ))}
