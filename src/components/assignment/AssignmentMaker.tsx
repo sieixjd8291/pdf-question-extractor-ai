@@ -22,7 +22,7 @@ import { TextPanel } from './TextPanel';
 import { QuickBar } from './QuickBar';
 import { MistakePanel } from './MistakePanel';
 import { LayoutPanel } from './LayoutPanel';
-import { FontPanel } from './FontPanel';
+import { FontPanel, type FontSlot } from './FontPanel';
 import { PenPanel } from './PenPanel';
 import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
@@ -89,8 +89,8 @@ export function AssignmentMaker() {
   const [pagePaperDialog, setPagePaperDialog] = useState<number | null>(null);
   const [pageImages, setPageImages] = useState<Record<string, HTMLImageElement>>({});
   const [helpOpen, setHelpOpen] = useState(false);
-  const [sampleFontOpen, setSampleFontOpen] = useState(false);
-  const openSampleFont = useCallback(() => setSampleFontOpen(true), []);
+  const [sampleFontOpen, setSampleFontOpen] = useState<FontSlot | null>(null);
+  const openSampleFont = useCallback((slot: FontSlot) => setSampleFontOpen(slot), []);
   const [confirmReset, setConfirmReset] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -397,30 +397,31 @@ export function AssignmentMaker() {
           ? findStockPaper(paper.id)?.name ?? 'Paper photo'
           : PAPER_TEMPLATES.find((t) => t.id === paper.template)?.name ?? 'Template';
 
-  const addCustomFamily = (family: string) => {
+  const addCustomFamily = (family: string, slot: FontSlot) => {
     clearMeasureCache(family);
     setCustomFonts((prev) => [{ family, label: family.replace(/^Custom /, ''), category: 'print', sizeAdjust: 1, custom: true }, ...prev.filter((f) => f.family !== family)]);
-    updateSettings({ fontFamily: family }, false);
+    updateSettings(slot === 'b' ? { fontFamilyB: family } : { fontFamily: family }, false);
   };
 
-  const uploadFont = async (file: File) => {
+  const uploadFont = async (file: File, slot: FontSlot) => {
     try {
-      addCustomFamily(await registerCustomFont(file));
-      toast.success('Your handwriting font is ready.');
+      addCustomFamily(await registerCustomFont(file), slot);
+      toast.success(slot === 'b' ? 'Your handwriting is now the second font.' : 'Your handwriting font is ready.');
     } catch {
       toast.error('That font file could not be loaded. Use a .ttf or .otf file.');
     }
   };
 
   const addGeneratedFont = async (name: string, buffer: ArrayBuffer) => {
-    addCustomFamily(await registerFontBuffer(name, buffer));
-    setSampleFontOpen(false);
-    toast.success(`"${name}" was added to your fonts.`);
+    const slot = sampleFontOpen ?? 'a';
+    addCustomFamily(await registerFontBuffer(name, buffer), slot);
+    setSampleFontOpen(null);
+    toast.success(slot === 'b' ? `"${name}" is now the second font.` : `"${name}" was added to your fonts.`);
   };
 
   const uploadFontLatest = useRef(uploadFont);
   uploadFontLatest.current = uploadFont;
-  const uploadFontRef = useCallback((file: File) => uploadFontLatest.current(file), []);
+  const uploadFontRef = useCallback((file: File, slot: FontSlot) => uploadFontLatest.current(file, slot), []);
 
   const openDiagramPicker = (page: number) => {
     diagramTarget.current = page;
@@ -860,7 +861,7 @@ isCustom={Boolean(doc.overrides[layoutDialogPage]) || doc.pageSnapToLines?.[layo
         );
       })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
-      {sampleFontOpen && <SampleFontDialog onClose={() => setSampleFontOpen(false)} onCreate={addGeneratedFont} />}
+      {sampleFontOpen && <SampleFontDialog onClose={() => setSampleFontOpen(null)} onCreate={addGeneratedFont} />}
       {confirmReset && (
         <ConfirmDialog
           title="Reset this document?"

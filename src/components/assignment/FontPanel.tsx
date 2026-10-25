@@ -50,15 +50,18 @@ function FontList({ fonts, value, onPick }: { fonts: HandwritingFont[]; value: s
   );
 }
 
+export type FontSlot = 'a' | 'b';
+
 export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont, onMakeFont }: {
   settings: AssignmentSettings;
   customFonts: HandwritingFont[];
   onSettings: (p: Partial<AssignmentSettings>) => void;
-  onUploadFont: (file: File) => void;
-  onMakeFont: () => void;
+  onUploadFont: (file: File, slot: FontSlot) => void;
+  onMakeFont: (slot: FontSlot) => void;
 }) {
-  const [browsing, setBrowsing] = useState<'a' | 'b' | null>(null);
+  const [browsing, setBrowsing] = useState<FontSlot | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const uploadSlot = useRef<FontSlot>('a');
   const fonts = useMemo(() => [...customFonts, ...HANDWRITING_FONTS], [customFonts]);
   const a = findFont(s.fontFamily, customFonts);
   const b = findFont(s.fontFamilyB, customFonts);
@@ -83,15 +86,55 @@ export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont, 
     </div>
   );
 
+  const sources = (which: FontSlot) => {
+    const compact = s.combineFonts;
+    const target = which === 'b' ? ' for the second font' : compact ? ' for the first font' : '';
+    const buttons = (
+      <>
+        <button
+          type="button"
+          className="btn secondary btn-sm am-full"
+          aria-label={compact ? `Upload your handwriting font${target}` : undefined}
+          onClick={() => {
+            uploadSlot.current = which;
+            fileRef.current?.click();
+          }}
+        >
+          <Upload size={14} aria-hidden="true" />
+          {compact ? 'Upload font' : 'Upload your handwriting (.ttf / .otf)'}
+        </button>
+        <button
+          type="button"
+          className="btn secondary btn-sm am-full"
+          aria-label={compact ? `Make a font from a handwriting sample${target}` : undefined}
+          onClick={() => onMakeFont(which)}
+        >
+          <WandSparkles size={14} aria-hidden="true" />
+          {compact ? 'From sample' : 'Make a font from a handwriting sample'}
+        </button>
+      </>
+    );
+    return compact ? <div className="am-font-sources">{buttons}</div> : buttons;
+  };
+
+  const slot = (which: FontSlot, font: HandwritingFont, title: string) => (
+    <div className="am-font-slot" role="group" aria-label={title}>
+      <span className="am-font-slot-title">{title}</span>
+      {picker(which, font)}
+      {sources(which)}
+    </div>
+  );
+
   return (
     <Section title="Handwriting font" badge={<span className="am-badge">{fonts.length} styles</span>}>
-      {picker('a', a)}
-      <button type="button" className="btn secondary btn-sm am-full" onClick={() => fileRef.current?.click()}>
-        <Upload size={14} />Upload your handwriting (.ttf / .otf)
-      </button>
-      <button type="button" className="btn secondary btn-sm am-full" onClick={onMakeFont}>
-        <WandSparkles size={14} />Make a font from a handwriting sample
-      </button>
+      {s.combineFonts ? (
+        slot('a', a, 'First font')
+      ) : (
+        <>
+          {picker('a', a)}
+          {sources('a')}
+        </>
+      )}
       <input
         ref={fileRef}
         type="file"
@@ -100,13 +143,13 @@ export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont, 
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.target.value = '';
-          if (f) onUploadFont(f);
+          if (f) onUploadFont(f, uploadSlot.current);
         }}
       />
       <Toggle checked={s.combineFonts} onChange={(v) => onSettings({ combineFonts: v })} label="Combine two fonts" description="Blends glyphs from two fonts for an ultra-natural look" />
       {s.combineFonts && (
         <>
-          {picker('b', b)}
+          {slot('b', b, 'Second font')}
           <SliderField label="Second font share" value={s.fontMix} min={0.05} max={0.95} step={0.05} onChange={(v) => onSettings({ fontMix: v })} format={(v) => `${Math.round(v * 100)}%`} defaultValue={0.35} />
         </>
       )}
