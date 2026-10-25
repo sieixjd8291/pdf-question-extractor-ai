@@ -78,6 +78,7 @@ import { streamRenderPdfPages } from '../lib/pdfEngine';
 import { downloadFileMobileSafe, isIosLikeBrowser } from '../lib/cropper';
 import { downloadBlob } from '../lib/zipPackager';
 import { StagedProgress, useProgressStatus, yieldToPaint } from '../lib/stagedProgress';
+import { runInBackground } from '../lib/backgroundTask';
 import { imageImportConcurrency, importMaxEdge, isLowPowerDevice } from '../lib/devicePerf';
 import { ExportButtonLabel, ScannerProgressBubble } from './ScannerProgressBubble';
 import type { AppMode, ScanMargin, ScanPageSize, ScanQualityPreset } from '../types';
@@ -2123,7 +2124,8 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     setPages(prev => prev.map(p => p.id === activePage.id ? { ...p, adj: { ...NEUTRAL_ADJUSTMENTS } } : p));
   };
 
-  const runExport = async (fmt: ExportFormat) => {
+  const runExport = (fmt: ExportFormat) => runInBackground(() => runExportNow(fmt));
+  const runExportNow = async (fmt: ExportFormat) => {
     if (pages.length === 0 || busy) return;
     setExportFormat(fmt);
     const baseName = safeFileName(docName);

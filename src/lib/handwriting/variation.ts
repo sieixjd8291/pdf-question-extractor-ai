@@ -131,6 +131,53 @@ export function pageLook(
   return look;
 }
 
+function lookDistance(a: PageLook, b: PageLook): number {
+  return Math.abs(a.angle - b.angle) / 0.4 + Math.hypot(a.dx - b.dx, a.dy - b.dy) / 0.01
+    + Math.abs(a.brightness - b.brightness) / 0.05 + Math.abs(a.warmth - b.warmth) / 0.06
+    + Math.abs(Math.cos(a.lightAngle) - Math.cos(b.lightAngle)) + (a.shadowSide !== b.shadowSide ? 1 : 0);
+}
+
+/** Natural looks only: no near-zero tilt, no heavy shadow stacked on soft focus. */
+function suitable(l: PageLook): boolean {
+  return Math.abs(l.angle) >= 0.15 && !(l.shadowSide !== null && l.softCorner !== null);
+}
+
+/**
+ * A fresh random seed for a re-roll that is clearly different from the page's current look
+ * (and from its neighbours) yet still suitable. The result is stored, so it stays stable afterwards.
+ */
+export function pickRerollSeed(
+  strength: VariationStrength | undefined,
+  current: PageLook | null,
+  avoid: Array<PageLook | null>,
+  page: number,
+  pageW: number,
+  pageH: number,
+): number {
+  const s = !strength || strength === 'off' ? 'natural' : strength;
+  const rand = () => {
+    const buf = new Uint32Array(1);
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(buf);
+    else buf[0] = Math.floor(Math.random() * 4294967295);
+    return (buf[0] >>> 0) || 1;
+  };
+  let best = rand();
+  let bestScore = -1;
+  for (let i = 0; i < 24; i++) {
+    const seed = rand();
+    const look = pageLook(s, 0, { seed }, page, pageW, pageH);
+    if (!look) continue;
+    const others = [current, ...avoid].filter((l): l is PageLook => !!l);
+    const score = (suitable(look) ? 0 : -100) + (others.length ? Math.min(...others.map((o) => lookDistance(look, o))) : 10);
+    if (score > bestScore) {
+      best = seed;
+      bestScore = score;
+    }
+    if (bestScore >= 4) break;
+  }
+  return best;
+}
+
 /** CSS transform equivalent of `applyLookFraming`, for preview overlays that sit on top of the canvas. */
 export function lookTransformCss(look: PageLook | null): string | undefined {
   if (!look) return undefined;

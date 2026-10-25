@@ -1,3 +1,4 @@
+import { yieldTask } from '../backgroundTask';
 import type { AssignmentSettings, Diagram } from './catalog';
 import { loadImage, renderPage, type LoadedDiagram, type RenderInput } from './render';
 
@@ -18,7 +19,7 @@ function canvasBlob(c: HTMLCanvasElement, type: string, quality: number): Promis
   return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('Export failed'))), type, quality));
 }
 
-const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
+const yieldFrame = yieldTask;
 
 function safeName(s: AssignmentSettings) {
   return (s.fileName || 'assignment').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'assignment';
