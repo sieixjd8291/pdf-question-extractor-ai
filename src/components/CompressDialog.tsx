@@ -235,7 +235,26 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
     try {
       // Every choice is measured from the source pages, never a previous compressed export.
       const targetSettings = (l: number) => targetCompressionSettings(l, baseQuality, png);
-      const result = await findTargetCompression(targetBytes, (l) => totalSize(targetSettings(l)));
+      const measured = new Map<number, number>();
+      const measureSourcePages = async (l: number) => {
+        const cached = measured.get(l);
+        if (cached !== undefined) return cached;
+        let size = 0;
+        for (let index = 0; index < pageCount; index++) {
+          if (!mounted.current) throw new Error('Compression cancelled');
+          const canvas = await renderPage(index);
+          try {
+            size += await encodeSize({ canvas, weight: 1, fullEdge: Math.max(canvas.width, canvas.height) }, targetSettings(l), png);
+          } finally {
+            releaseCanvas(canvas);
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
+        measured.set(l, size);
+        return size;
+      };
+      // Custom requests use real source encodes, not the slider's sampled estimates or quality caps.
+      const result = await findTargetCompression(targetBytes, measureSourcePages);
       if (!mounted.current) return;
       onApply({ ...targetSettings(result.level), targetBytes });
     } catch {
@@ -264,7 +283,7 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
             disabled={!ready || working || applying || !!error || (targetValue !== '' && !usingTarget)}
             onClick={() => void handleApply()}
           >
-            Apply
+            {applying ? 'Compressing…' : 'Apply'}
           </button>
         </>
       }
@@ -325,7 +344,6 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
             <div className="compress-target">
               <input
                 type="number"
-                min={0.001}
                 step="any"
                 disabled={applying}
                 inputMode="decimal"
