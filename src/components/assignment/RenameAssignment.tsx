@@ -9,10 +9,12 @@ export function RenameAssignment({ name, disabled, onRename }: { name: string; d
   const valid = /[\w]/.test(draft);
   return (
     <>
-      <button type="button" className="icon-button" aria-label="Rename assignment" title="Rename assignment" disabled={disabled}
-        onClick={() => { setDraft(name); setOpen(true); }}>
-        <Pencil size={16} />
-      </button>
+      <span className="am-actionbar-icons">
+        <button type="button" className="icon-button" aria-label="Rename assignment" title="Rename assignment" disabled={disabled}
+          onClick={() => { setDraft(name); setOpen(true); }}>
+          <Pencil size={16} />
+        </button>
+      </span>
       {open && (
         <Modal title="Rename assignment" closeLabel="Close rename" width="sm" onClose={() => setOpen(false)}
           footer={<>
