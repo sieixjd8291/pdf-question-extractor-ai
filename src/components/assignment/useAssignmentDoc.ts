@@ -66,6 +66,7 @@ function loadDraft(): AssignmentDoc {
       settings,
       overrides: saved.overrides && typeof saved.overrides === 'object' ? saved.overrides : {},
       pagePapers: restorePagePapers(saved.pagePapers),
+      pageSnapToLines: Object.fromEntries(Object.entries(saved.pageSnapToLines ?? {}).filter(([page, enabled]) => Number.isInteger(Number(page)) && Number(page) >= 0 && typeof enabled === 'boolean')) as Record<number, boolean>,
       pageAdjust: restorePageAdjust(saved.pageAdjust),
       pageVariation: restorePageVariation(saved.pageVariation),
       diagrams: [],
@@ -130,13 +131,13 @@ export function useAssignmentDoc() {
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers, pageAdjust: doc.pageAdjust, pageVariation: doc.pageVariation, textOffsets: doc.textOffsets }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: doc.text, settings: doc.settings, overrides: doc.overrides, pagePapers: doc.pagePapers, pageSnapToLines: doc.pageSnapToLines, pageAdjust: doc.pageAdjust, pageVariation: doc.pageVariation, textOffsets: doc.textOffsets }));
       } catch {
         // Storage full or blocked: the draft simply isn't kept.
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers, doc.pageAdjust, doc.pageVariation, doc.textOffsets]);
+  }, [doc.text, doc.settings, doc.overrides, doc.pagePapers, doc.pageSnapToLines, doc.pageAdjust, doc.pageVariation, doc.textOffsets]);
 
   return {
     doc,
