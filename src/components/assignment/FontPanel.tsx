@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, Search, Upload } from 'lucide-react';
+import { ChevronDown, Search, Upload, WandSparkles } from 'lucide-react';
 import { HANDWRITING_FONTS, findFont, type AssignmentSettings, type FontCategory, type HandwritingFont } from '../../lib/handwriting/catalog';
 import { Section, Segmented, SliderField, Toggle } from './controls';
 
@@ -50,11 +50,12 @@ function FontList({ fonts, value, onPick }: { fonts: HandwritingFont[]; value: s
   );
 }
 
-export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont }: {
+export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont, onMakeFont }: {
   settings: AssignmentSettings;
   customFonts: HandwritingFont[];
   onSettings: (p: Partial<AssignmentSettings>) => void;
   onUploadFont: (file: File) => void;
+  onMakeFont: () => void;
 }) {
   const [browsing, setBrowsing] = useState<'a' | 'b' | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -87,6 +88,9 @@ export function FontPanel({ settings: s, customFonts, onSettings, onUploadFont }
       {picker('a', a)}
       <button type="button" className="btn secondary btn-sm am-full" onClick={() => fileRef.current?.click()}>
         <Upload size={14} />Upload your handwriting (.ttf / .otf)
+      </button>
+      <button type="button" className="btn secondary btn-sm am-full" onClick={onMakeFont}>
+        <WandSparkles size={14} />Make a font from a handwriting sample
       </button>
       <input
         ref={fileRef}

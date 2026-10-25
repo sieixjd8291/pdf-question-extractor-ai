@@ -5,7 +5,7 @@ import { useToast } from '../Toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwriting/engine';
 import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type ArrangeMode, type Diagram, type TextOffset, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
-import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
+import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont, registerFontBuffer } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { effectivePageSeed, lookTransformCss, pageLook, pickRerollSeed, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
@@ -29,6 +29,7 @@ import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
 import { RenameAssignment } from './RenameAssignment';
 import { ExportMenu, HelpDialog, PageAdjustDialog, PageLayoutDialog, PaperDialog, type PageLookControls } from './dialogs';
+import { SampleFontDialog } from './SampleFontDialog';
 import { MobileTabs, type MobileView } from './MobileTabs';
 
 // Panels only depend on settings + stable callbacks, so typing or page
@@ -88,6 +89,8 @@ export function AssignmentMaker() {
   const [pagePaperDialog, setPagePaperDialog] = useState<number | null>(null);
   const [pageImages, setPageImages] = useState<Record<string, HTMLImageElement>>({});
   const [helpOpen, setHelpOpen] = useState(false);
+  const [sampleFontOpen, setSampleFontOpen] = useState(false);
+  const openSampleFont = useCallback(() => setSampleFontOpen(true), []);
   const [confirmReset, setConfirmReset] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -394,16 +397,25 @@ export function AssignmentMaker() {
           ? findStockPaper(paper.id)?.name ?? 'Paper photo'
           : PAPER_TEMPLATES.find((t) => t.id === paper.template)?.name ?? 'Template';
 
+  const addCustomFamily = (family: string) => {
+    clearMeasureCache(family);
+    setCustomFonts((prev) => [{ family, label: family.replace(/^Custom /, ''), category: 'print', sizeAdjust: 1, custom: true }, ...prev.filter((f) => f.family !== family)]);
+    updateSettings({ fontFamily: family }, false);
+  };
+
   const uploadFont = async (file: File) => {
     try {
-      const family = await registerCustomFont(file);
-      clearMeasureCache(family);
-      setCustomFonts((prev) => [{ family, label: family.replace(/^Custom /, ''), category: 'print', sizeAdjust: 1, custom: true }, ...prev.filter((f) => f.family !== family)]);
-      updateSettings({ fontFamily: family }, false);
+      addCustomFamily(await registerCustomFont(file));
       toast.success('Your handwriting font is ready.');
     } catch {
       toast.error('That font file could not be loaded. Use a .ttf or .otf file.');
     }
+  };
+
+  const addGeneratedFont = async (name: string, buffer: ArrayBuffer) => {
+    addCustomFamily(await registerFontBuffer(name, buffer));
+    setSampleFontOpen(false);
+    toast.success(`"${name}" was added to your fonts.`);
   };
 
   const uploadFontLatest = useRef(uploadFont);
@@ -713,7 +725,7 @@ export function AssignmentMaker() {
             onSettings={updateSettings}
           />
           <MistakePanelM settings={s} counts={mistakeCounts} onSettings={updateSettings} />
-          <FontPanelM settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFontRef} />
+          <FontPanelM settings={s} customFonts={customFonts} onSettings={updateSettings} onUploadFont={uploadFontRef} onMakeFont={openSampleFont} />
           <PenPanelM settings={s} onSettings={updateSettings} />
           <StylePanelM settings={s} onSettings={updateSettings} />
           <LayoutPanelM
@@ -848,6 +860,7 @@ isCustom={Boolean(doc.overrides[layoutDialogPage]) || doc.pageSnapToLines?.[layo
         );
       })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+      {sampleFontOpen && <SampleFontDialog onClose={() => setSampleFontOpen(false)} onCreate={addGeneratedFont} />}
       {confirmReset && (
         <ConfirmDialog
           title="Reset this document?"

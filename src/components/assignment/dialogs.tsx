@@ -7,7 +7,7 @@ import { LayoutFields } from './LayoutPanel';
 import { AdjustFields } from './AdjustFields';
 import { Toggle } from './controls';
 
-function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useDialog(onClose);
   return (
     <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
