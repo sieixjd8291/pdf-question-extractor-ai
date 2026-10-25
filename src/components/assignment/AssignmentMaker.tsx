@@ -9,7 +9,7 @@ import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } f
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
 import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
-import { detectRuling, layoutFromRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
+import { detectRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
 import { docOnLines, pageWritesOnLines, templateLineStep } from '../../lib/handwriting/snapLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
@@ -242,32 +242,13 @@ export function AssignmentMaker() {
     };
   }, [doc.diagrams, color, tinted]);
 
-  const [rulingStatus, setRulingStatus] = useState<RulingStatus>(null);
-  const layoutRef = useRef(s.layout);
-  layoutRef.current = s.layout;
-  const fontSizeRef = useRef(s.fontSize);
-  fontSizeRef.current = s.fontSize;
-  const paperKind = s.paper?.kind ?? null;
-
-  useEffect(() => {
-    if (!paperKind) return setRulingStatus(null);
-    if (paperKind === 'template') return setRulingStatus('template');
-    if (!s.snapToLines || !photo) return setRulingStatus(null);
-    const ruling = rulingForImage(photo);
-    if (!ruling) return setRulingStatus('none');
-    setRulingStatus('detected');
-    const cur = layoutRef.current;
-    const next = layoutFromRuling(ruling, cur, size.height);
-    const changed =
-      Math.abs((next.angle ?? 0) - (cur.angle ?? 0)) > 0.1 ||
-      (['marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'lineHeight'] as const).some((k) => Math.abs(next[k] - cur[k]) > 0.5);
-    const ratio = fontSizeRef.current / next.lineHeight;
-    const patch: Partial<typeof s> = {};
-    if (changed) patch.layout = next;
-    if (ratio < 0.55 || ratio > 0.85) patch.fontSize = Math.round(next.lineHeight * 0.72);
-    if (Object.keys(patch).length) updateSettings(patch, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.snapToLines, photo, paperKind, size.width, size.height, updateSettings]);
+  const rulingStatus: RulingStatus = !s.paper
+    ? null
+    : s.paper.kind === 'template'
+      ? 'template'
+      : !s.snapToLines || !photo
+        ? null
+        : rulingForPage(-1) ? 'detected' : 'none';
 
   const diagramsWithTint: Diagram[] = useMemo(
     () => doc.diagrams.map((d) => ({ ...d, tintedSrc: tinted[`${d.id}|${color}`] ?? null })),
@@ -370,34 +351,6 @@ export function AssignmentMaker() {
       cancelled = true;
     };
   }, [pageStockKey, pageImages, toast]);
-
-  // With "Write within the lines" on, pages that use a different paper than the
-  // document get their own detected layout, so each page follows its own ruling.
-  const pageRulingDone = useRef(new Map<number, string>());
-  useEffect(() => {
-    const patches: Record<number, PageLayout> = {};
-    for (const [key, paper] of Object.entries(doc.pagePapers)) {
-      const page = Number(key);
-      if (samePaper(paper, s.paper) || paper.kind === 'template') {
-        pageRulingDone.current.delete(page);
-        continue;
-      }
-      if (!pageWritesOnLines(doc, page, paper)) continue;
-      const imgKey = pageImageKey(paper);
-      const img = imgKey ? pageImages[imgKey] : null;
-      if (!imgKey || !img) continue;
-      const stamp = `${imgKey}|${size.width}x${size.height}`;
-      if (pageRulingDone.current.get(page) === stamp) continue;
-      pageRulingDone.current.set(page, stamp);
-      const ruling = rulingForImage(img);
-      if (!ruling) continue;
-      patches[page] = layoutFromRuling(ruling, layoutForPage(s, doc.overrides, page), size.height);
-    }
-    const pagesToPatch = Object.keys(patches);
-    if (!pagesToPatch.length) return;
-    update((d) => ({ ...d, overrides: { ...d.overrides, ...patches } }), false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.snapToLines, s.paper, doc.pagePapers, pageImages, size.width, size.height, update]);
 
   const setPagePaper = useCallback(
     (page: number, paper: PaperChoice | null, layout?: PageLayout) => {

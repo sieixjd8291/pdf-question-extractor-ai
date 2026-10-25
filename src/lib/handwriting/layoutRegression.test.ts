@@ -79,6 +79,94 @@ test('first-line slider can reach the photo top instead of clamping to its first
   }
 });
 
+test('every layout slider re-aligns ruled paper globally and individually without rewriting settings', () => {
+  const flatRuling = { ...ruling, angle: 0, slope: 0 };
+  const patches = [
+    { marginLeft: 0 }, { marginLeft: 317 }, { marginRight: 0 }, { marginRight: 283 },
+    { marginTop: 177 }, { marginTop: 603 }, { marginBottom: 0 }, { marginBottom: 217 },
+    { lineHeight: 10 }, { lineHeight: 71.5 }, { lineHeight: 143 },
+  ];
+  for (const customized of [false, true]) {
+    for (const patch of patches) {
+      const doc = document();
+      const desired = { ...layout, ...patch };
+      if (customized) doc.overrides[0] = desired;
+      else doc.settings = { ...doc.settings, layout: desired };
+      const before = structuredClone(doc);
+      const drawn = docOnLines(doc, () => flatRuling, () => doc.settings.paper);
+      const actual = customized ? drawn.overrides[0] : drawn.settings.layout;
+      assert.deepEqual(doc, before);
+      assert.equal(actual.marginLeft, desired.marginLeft);
+      assert.equal(actual.marginRight, desired.marginRight);
+      assert.equal(actual.marginBottom, desired.marginBottom);
+      assert.equal(actual.lineHeight % flatRuling.lineHeight, 0);
+      assert.equal((actual.marginTop - flatRuling.firstLine) % flatRuling.lineHeight, 0);
+    }
+  }
+});
+
+test('templates use their own flat geometry and blank or undetected paper stays free', () => {
+  for (const template of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+    const doc = document();
+    doc.settings = { ...doc.settings, paper: { kind: 'template', template }, layout: { ...layout, angle: 3 } };
+    doc.pagePapers[1] = { kind: 'template', template };
+    doc.overrides[1] = { ...layout, marginLeft: 217, marginTop: 193, lineHeight: 71.5, angle: 4 };
+    doc.textOffsets = { 'p0.l0': { x: 13, y: 17 }, 'p1.l0.w0': { x: -9, y: 17 } };
+    const before = structuredClone(doc);
+    const drawn = docOnLines(doc, () => null, (page) => doc.pagePapers[page] ?? doc.settings.paper);
+    const enabled = ![0, 6, 7].includes(template);
+    assert.equal(drawn.settings.snapToLines, enabled);
+    assert.equal(drawn.overrides[1].snapToLines, enabled);
+    assert.equal(drawn.settings.layout.angle, 0);
+    assert.equal(drawn.overrides[1].angle, 0);
+    assert.equal(drawn.overrides[1].marginTop, 193);
+    assert.equal(drawn.overrides[1].lineHeight, 71.5);
+    if (!enabled) assert.deepEqual(drawn.textOffsets, doc.textOffsets);
+    assert.deepEqual(doc, before);
+  }
+  const doc = document();
+  doc.textOffsets = { p0: { x: 13, y: 17 } };
+  const drawn = docOnLines(doc, () => null, () => doc.settings.paper);
+  assert.equal(drawn.settings.snapToLines, false);
+  assert.deepEqual(drawn.textOffsets, doc.textOffsets);
+  assert.equal(doc.settings.snapToLines, true);
+});
+
+test('unruled header placement does not move the body off printed lines after slider edits', () => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 40 }) }) }) } });
+  try {
+    const font = findFont(DEFAULT_SETTINGS.fontFamily);
+    const flatRuling = { ...ruling, firstLine: 279, angle: 0, slope: 0 };
+    for (const customized of [false, true]) {
+      for (const top of [80, 120, 160]) {
+        const doc = document();
+        const desired = { ...layout, marginTop: top };
+        if (customized) doc.overrides[0] = desired;
+        else doc.settings = { ...doc.settings, layout: desired };
+        const drawn = docOnLines(doc, () => flatRuling, () => doc.settings.paper);
+        const actual = customized ? drawn.overrides[0] : drawn.settings.layout;
+        const body = actual.marginTop + Math.ceil((flatRuling.firstLine - actual.marginTop) / actual.lineHeight) * actual.lineHeight;
+        const engine = { layout: () => new Float32Array([1, 3, 1,
+          0, 0, actual.marginLeft, actual.marginTop, 0, 1, 0, 1, 0, 0,
+          0, 0, actual.marginLeft, body, 0, 1, 0, 1, 0, 0,
+          0, 0, actual.marginLeft + 40, body + 0.5, 0, 1, 0, 1, 0, 0,
+          0, 4, 2, actual.marginLeft, body + 8, actual.marginLeft + 80, body + 8,
+        ]) } as unknown as HandwritingEngine;
+        const result = runLayout(engine, drawn.settings, segment('a\naa'), font, font, drawn.overrides);
+        assert.equal(result.glyphs[3], actual.marginTop);
+        assert.equal((result.glyphs[13] - flatRuling.firstLine) % actual.lineHeight, 0);
+        assert.equal(result.glyphs[23] - result.glyphs[13], 0.5);
+        assert.equal(result.strokes[0].points[1], result.glyphs[13] + 8);
+        assert.equal((customized ? doc.overrides[0] : doc.settings.layout).marginTop, top);
+      }
+    }
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+});
+
 test('individual snapping overrides the global mode without changing other pages or saved positions', () => {
   for (const globalEnabled of [true, false]) {
     const doc = document();

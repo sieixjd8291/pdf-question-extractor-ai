@@ -1,6 +1,7 @@
 import type { AssignmentDoc, PageLayout, PaperChoice, TextOffsets } from './catalog';
 
 export function pageWritesOnLines(doc: AssignmentDoc, page: number, paper: PaperChoice | null | undefined): boolean {
+  if (!paper || (paper.kind === 'template' && templateLineStep(paper, doc.settings.layout) === null)) return false;
   return doc.pageSnapToLines?.[page]
     ?? (paper?.kind === 'template' && (paper.template === 3 || paper.template === 4) ? true : doc.settings.snapToLines);
 }
@@ -31,6 +32,7 @@ export function layoutOnLines(ruling: DetectedRuling, desired: PageLayout, minim
     ...desired,
     lineHeight: Number((pitch * every).toFixed(2)),
     marginTop,
+    rulingStart: firstAtMargin,
     angle: ruling.angle,
   };
 }
@@ -52,22 +54,27 @@ export function docOnLines(
   let overrides = doc.overrides;
 
   const minimumBaseline = Math.ceil(s.fontSize * Math.max(1, s.headingScale));
-  const globalEnabled = pageWritesOnLines(doc, -1, s.paper);
-  const global = globalEnabled ? rulingFor(-1) : null;
-  if (global || globalEnabled !== s.snapToLines) {
-    settings = { ...s, snapToLines: globalEnabled, layout: global ? layoutOnLines(global, s.layout, minimumBaseline) : s.layout };
+  const globalRequested = pageWritesOnLines(doc, -1, s.paper);
+  const global = globalRequested ? rulingFor(-1) : null;
+  const globalEnabled = globalRequested && (global !== null || templateLineStep(s.paper, s.layout) !== null);
+  const globalLayout = global
+    ? layoutOnLines(global, s.layout, minimumBaseline)
+    : s.paper?.kind === 'template' ? { ...s.layout, angle: 0 } : s.layout;
+  if (globalLayout !== s.layout || globalEnabled !== s.snapToLines) {
+    settings = { ...s, snapToLines: globalEnabled, layout: globalLayout };
   }
   const pages = new Set([
     ...Object.keys(doc.overrides), ...Object.keys(doc.pagePapers), ...Object.keys(doc.pageSnapToLines ?? {}),
   ].map(Number));
   for (const page of pages) {
     const paper = paperFor(page);
-    const enabled = pageWritesOnLines(doc, page, paper);
-    const ruling = enabled ? rulingFor(page) : null;
+    const requested = pageWritesOnLines(doc, page, paper);
+    const ruling = requested ? rulingFor(page) : null;
     const own = doc.overrides[page];
-    if (!own && enabled === globalEnabled && ruling === global) continue;
-    if (overrides === doc.overrides) overrides = { ...doc.overrides };
     const desired = own ?? s.layout;
+    const enabled = requested && (ruling !== null || templateLineStep(paper, desired) !== null);
+    if (!own && !doc.pagePapers[page] && enabled === globalEnabled && ruling === global) continue;
+    if (overrides === doc.overrides) overrides = { ...doc.overrides };
     overrides[page] = {
       ...(ruling ? layoutOnLines(ruling, desired, minimumBaseline) : desired),
       ...(!ruling && paper?.kind === 'template' ? { angle: 0 } : {}),
@@ -76,8 +83,8 @@ export function docOnLines(
   }
 
   const stepFor = (page: number): number | null => {
-    if (!pageWritesOnLines(doc, page, paperFor(page))) return null;
     const layout = layoutForPage(settings, overrides, page);
+    if (!(layout.snapToLines ?? settings.snapToLines)) return null;
     return templateLineStep(paperFor(page), layout) ?? (rulingFor(page) ? layout.lineHeight : null);
   };
 

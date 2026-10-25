@@ -436,6 +436,25 @@ export function runLayout(
     strokes.push({ page, kind, points: outputForPage(page).slice(p + 3, p + 3 + count * 2) });
     p += 3 + count * 2;
   }
+  const ruledShift = (page: number, y: number): number => {
+    const layout = layoutForPage(s, overrides, page);
+    if (!(layout.snapToLines ?? s.snapToLines) || layout.rulingStart === undefined) return 0;
+    const baseline = layout.marginTop + Math.round((y - layout.marginTop) / layout.lineHeight) * layout.lineHeight;
+    if (baseline < layout.rulingStart) return 0;
+    return layout.rulingStart + Math.round((baseline - layout.rulingStart) / layout.lineHeight) * layout.lineHeight - baseline;
+  };
+  // Header placement stays free, but its arbitrary phase must not carry into the ruled body.
+  for (let i = 0; i < glyphCount; i++) {
+    const start = i * GLYPH_STRIDE;
+    glyphs[start + 3] += ruledShift(glyphs[start], glyphs[start + 3]);
+  }
+  for (const stroke of strokes) {
+    if (!stroke.points.length) continue;
+    let centerY = 0;
+    for (let i = 1; i < stroke.points.length; i += 2) centerY += stroke.points[i];
+    const dy = ruledShift(stroke.page, centerY / (stroke.points.length / 2));
+    for (let i = 1; i < stroke.points.length; i += 2) stroke.points[i] += dy;
+  }
   const blocks = arrangeText(glyphs, glyphCount, strokes, pages, s, overrides, fontA, useB ? fontB : fontA, wa, wb, offsets);
   return { pages, glyphs, glyphCount, strokes, glyphsByPage, blocks };
 }

@@ -203,6 +203,8 @@ export interface PageLayout {
   angle?: number;
   /** Effective per-page alignment, derived for the layout engine. */
   snapToLines?: boolean;
+  /** First printed baseline in the derived layout; header text remains freely positioned. */
+  rulingStart?: number;
 }
 
 /** `photoId` identifies a per-page uploaded photo; without it, `photo` is the document-wide upload. */
