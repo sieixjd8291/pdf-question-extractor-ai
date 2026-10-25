@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Modal } from './Modal';
-import { findTargetCompression, sampleSizeWeight, targetCompressionSettings } from '../lib/scannerCompression';
+import { findTargetCompression, refineTargetLevel, sampleSizeWeight, targetCompressionSettings } from '../lib/scannerCompression';
+import { isLowPowerDevice } from '../lib/devicePerf';
+import { yieldTask } from '../lib/backgroundTask';
 
 export interface CompressionSettings {
   quality: number;
@@ -70,8 +72,8 @@ export function resizeSmooth(src: HTMLCanvasElement, scale: number): HTMLCanvasE
   return out;
 }
 
-const MAX_SAMPLES = 3;
-const SAMPLE_MAX_EDGE = 1800;
+const MAX_SAMPLES = isLowPowerDevice() ? 2 : 3;
+const SAMPLE_MAX_EDGE = isLowPowerDevice() ? 1200 : 1800;
 
 interface Sample {
   canvas: HTMLCanvasElement;
@@ -117,6 +119,7 @@ function formatBytes(bytes: number) {
 export function CompressDialog({ format, baseQuality, current, pageCount, renderPage, onApply, onClose }: CompressDialogProps) {
   const png = format === 'png';
   const samplesRef = useRef<Sample[]>([]);
+  const estimateCache = useRef(new Map<string, number>());
   const [ready, setReady] = useState(false);
   const [working, setWorking] = useState(false);
   const [originalSize, setOriginalSize] = useState(0);
@@ -144,12 +147,17 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
   const totalSize = async (st: CompressionSettings) => {
     const samples = samplesRef.current;
     if (samples.length === 0) return 0;
+    const key = `${st.quality.toFixed(4)}|${st.scale.toFixed(4)}|${st.maxEdge}`;
+    const cached = estimateCache.current.get(key);
+    if (cached !== undefined) return cached;
     let sum = 0;
     for (const sample of samples) {
       sum += await encodeSize(sample, st, png);
-      await new Promise<void>((r) => window.setTimeout(r, 0));
+      await yieldTask();
     }
-    return Math.round((sum * pageCount) / samples.length);
+    const total = Math.round((sum * pageCount) / samples.length);
+    estimateCache.current.set(key, total);
+    return total;
   };
 
   useEffect(() => {
@@ -174,7 +182,7 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
           } else {
             loaded.push({ canvas: full, weight: 1, fullEdge });
           }
-          await new Promise<void>((r) => window.setTimeout(r, 0));
+          await yieldTask();
         }
         if (cancelled) { loaded.forEach((x) => releaseCanvas(x.canvas)); return; }
         samplesRef.current = loaded;
@@ -248,13 +256,15 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
           } finally {
             releaseCanvas(canvas);
           }
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+          await yieldTask();
         }
         measured.set(l, size);
         return size;
       };
-      // Custom requests use real source encodes, not the slider's sampled estimates or quality caps.
-      const result = await findTargetCompression(targetBytes, measureSourcePages);
+      // Search on the cheap downscaled samples, then confirm with real source encodes.
+      const guess = await findTargetCompression(targetBytes, (l) => totalSize(targetSettings(l)));
+      if (!mounted.current) return;
+      const result = await refineTargetLevel(guess.level, targetBytes, measureSourcePages);
       if (!mounted.current) return;
       onApply({ ...targetSettings(result.level), targetBytes });
     } catch {

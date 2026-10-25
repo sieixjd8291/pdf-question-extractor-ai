@@ -21,6 +21,11 @@ function canvasBlob(c: HTMLCanvasElement, type: string, quality: number): Promis
 
 const yieldFrame = yieldTask;
 
+function release(c: HTMLCanvasElement) {
+  c.width = 0;
+  c.height = 0;
+}
+
 function safeName(s: AssignmentSettings) {
   return (s.fileName || 'assignment').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'assignment';
 }
@@ -53,8 +58,10 @@ export async function exportAssignment(
     const ph = pdf.internal.pageSize.getHeight();
     for (let i = 0; i < pages.length; i++) {
       const c = await render(pages[i], i);
+      const bytes = new Uint8Array(await (await canvasBlob(c, 'image/jpeg', s.exportQuality)).arrayBuffer());
+      release(c);
       if (i > 0) pdf.addPage(fmt, 'portrait');
-      pdf.addImage(c.toDataURL('image/jpeg', s.exportQuality), 'JPEG', 0, 0, pw, ph, undefined, 'FAST');
+      pdf.addImage(bytes, 'JPEG', 0, 0, pw, ph, undefined, 'FAST');
     }
     downloadBlob(pdf.output('blob'), `${name}.pdf`);
     return;
@@ -64,7 +71,9 @@ export async function exportAssignment(
   const ext = format === 'png' ? 'png' : 'jpg';
   if (format !== 'zip' && pages.length === 1) {
     const c = await render(pages[0], 0);
-    downloadBlob(await canvasBlob(c, type, s.exportQuality), `${name}-page-${pages[0] + 1}.${ext}`);
+    const blob = await canvasBlob(c, type, s.exportQuality);
+    release(c);
+    downloadBlob(blob, `${name}-page-${pages[0] + 1}.${ext}`);
     return;
   }
   const { default: JSZip } = await import('jszip');
@@ -73,7 +82,10 @@ export async function exportAssignment(
   const zipExt = format === 'zip' ? 'jpg' : ext;
   for (let i = 0; i < pages.length; i++) {
     const c = await render(pages[i], i);
-    zip.file(`${name}-page-${String(pages[i] + 1).padStart(2, '0')}.${zipExt}`, await canvasBlob(c, zipType, s.exportQuality));
+    const blob = await canvasBlob(c, zipType, s.exportQuality);
+    release(c);
+    zip.file(`${name}-page-${String(pages[i] + 1).padStart(2, '0')}.${zipExt}`, blob);
   }
-  downloadBlob(await zip.generateAsync({ type: 'blob' }), `${name}-pages.zip`);
+  // JPEG/PNG are already compressed; deflating them again only burns CPU.
+  downloadBlob(await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true }), `${name}-pages.zip`);
 }

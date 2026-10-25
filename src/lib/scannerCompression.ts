@@ -35,3 +35,23 @@ export async function findTargetCompression(
   }
   return { level: high, size, reachable: true };
 }
+
+/**
+ * Confirms a sampled guess with real measurements. Starts at `startLevel` and steps
+ * toward 100 only while the real size is still over target, so a good estimate costs
+ * one full pass instead of a full binary search over every page.
+ */
+export async function refineTargetLevel(
+  startLevel: number,
+  targetBytes: number,
+  measure: (level: number) => Promise<number>,
+  maxSteps = 3,
+): Promise<{ level: number; size: number; reachable: boolean }> {
+  let level = Math.min(100, Math.max(0, Math.round(startLevel)));
+  let size = await measure(level);
+  for (let step = 1; step < maxSteps && size > targetBytes && level < 100; step++) {
+    level = step === maxSteps - 1 ? 100 : Math.min(100, level + Math.max(6, Math.ceil((100 - level) / 3)));
+    size = await measure(level);
+  }
+  return { level, size, reachable: size <= targetBytes };
+}

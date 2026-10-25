@@ -28,7 +28,7 @@ import {
   downloadMultipleIndividualFiles,
   isIosLikeBrowser,
 } from './lib/cropper';
-import { importMaxEdge } from './lib/devicePerf';
+import { importMaxEdge, isLowPowerDevice } from './lib/devicePerf';
 import { yieldToPaint } from './lib/stagedProgress';
 import type { ZipExportFormat } from './lib/zipPackager';
 import { detectQuestionsFromPage } from './lib/documentQuestionDetector';
@@ -36,7 +36,6 @@ import { autoFixImageOrientation } from './lib/orientationDetector';
 import type { BookScanProgress } from './lib/bookPaginationEngine';
 import { newActivityId } from './lib/activityTracker';
 import { recordAndSyncActivity } from './lib/activityCloud';
-import { AssignmentMaker } from './components/assignment/AssignmentMaker';
 import { Dashboard } from './components/Dashboard';
 
 function retryImport<T>(fn: () => Promise<T>, retries = 3, delayMs = 400): Promise<T> {
@@ -51,7 +50,7 @@ function retryImport<T>(fn: () => Promise<T>, retries = 3, delayMs = 400): Promi
 const screenLoaders = {
   dashboard: () => Promise.resolve({ Dashboard }),
   latex: () => retryImport(() => import('./components/LaTeXStudio')),
-  assignment: () => Promise.resolve({ AssignmentMaker }),
+  assignment: () => retryImport(() => import('./components/assignment/AssignmentMaker')),
   scanner: () => retryImport(() => import('./components/CamScanner')),
   bookMapper: () => retryImport(() => import('./components/BookChapterMapperView')),
   settings: () => retryImport(() => import('./components/SettingsModal')),
@@ -65,6 +64,7 @@ const FullscreenModal = lazy(() => screenLoaders.fullscreen().then((m) => ({ def
 const BookChapterMapperView = lazy(() => screenLoaders.bookMapper().then((m) => ({ default: m.BookChapterMapperView })));
 const LaTeXStudio = lazy(() => screenLoaders.latex().then((m) => ({ default: m.LaTeXStudio })));
 const CamScanner = lazy(() => screenLoaders.scanner().then((m) => ({ default: m.CamScanner })));
+const AssignmentMaker = lazy(() => screenLoaders.assignment().then((m) => ({ default: m.AssignmentMaker })));
 
 /**
  * Warm the other tool screens one at a time while the browser is idle, so
@@ -73,8 +73,9 @@ const CamScanner = lazy(() => screenLoaders.scanner().then((m) => ({ default: m.
  */
 function prefetchScreensWhenIdle(): () => void {
   const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
-  if (conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType ?? '')) return () => {};
-  const queue = Object.values(screenLoaders);
+  if (conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType ?? '') || isLowPowerDevice()) return () => {};
+  // Only the heaviest, most-used tools; the rest load on first open.
+  const queue = [screenLoaders.scanner, screenLoaders.assignment];
   const idle: (cb: () => void) => number =
     window.requestIdleCallback?.bind(window) ?? ((cb) => window.setTimeout(cb, 300));
   const cancelIdle: (id: number) => void = window.cancelIdleCallback?.bind(window) ?? window.clearTimeout;
