@@ -73,6 +73,7 @@ export function useHandwritingPages(
   previewScale: number,
   getVisiblePages?: () => number[],
   activeGuide?: ActiveGuide,
+  guideDoc: AssignmentDoc = doc,
 ): PagesState {
   const [state, setState] = useState<PagesState>({ canvases: [], input: null, rendering: false, error: null });
   const cache = useRef<CachedPage[]>([]);
@@ -81,8 +82,8 @@ export function useHandwritingPages(
   const visibleRef = useRef(getVisiblePages);
   visibleRef.current = getVisiblePages;
 
-  const latestRef = useRef({ engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null });
-  latestRef.current = { engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null };
+  const latestRef = useRef({ engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null, guideDoc });
+  latestRef.current = { engine, doc, photo, images, customFonts, previewScale, activeGuide: activeGuide ?? null, guideDoc };
 
   const liveRafRef = useRef(0);
   const prevTextRef = useRef(doc.text);
@@ -142,6 +143,7 @@ export function useHandwritingPages(
             engine: cur.engine,
             settings: s,
             overrides: cur.doc.overrides,
+            guideDoc: cur.guideDoc,
             layout,
             units: p.seg.units,
             fontA: fA,
@@ -223,6 +225,7 @@ export function useHandwritingPages(
           engine,
           settings,
           overrides: doc.overrides,
+          guideDoc,
           layout,
           units: p.seg.units,
           fontA: fA,
@@ -301,7 +304,7 @@ export function useHandwritingPages(
       clearTimeout(timer);
       clearTimeout(busyTimer);
     };
-  }, [engine, doc, photo, images, customFonts, previewScale, activeGuide]);
+  }, [engine, doc, photo, images, customFonts, previewScale, activeGuide, guideDoc]);
 
   useEffect(() => {
     return () => {

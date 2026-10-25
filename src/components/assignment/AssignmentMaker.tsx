@@ -131,7 +131,7 @@ export function AssignmentMaker() {
     [doc, s, rulingForPage],
   );
   const drawn = drawnDoc.settings;
-  const pages = useHandwritingPages(engine, drawnDoc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide);
+  const pages = useHandwritingPages(engine, drawnDoc, photo, pageImages, customFonts, previewScale, getVisiblePages, activeGuide, doc);
   const pageCount = pages.input?.layout.pages ?? pages.canvases.length;
 
   const [arrangeMode, setArrangeMode] = useState<ArrangeMode>('line');
@@ -763,6 +763,7 @@ export function AssignmentMaker() {
             settings={s}
             overrideCount={Object.keys(doc.overrides).length}
             rulingStatus={rulingStatus}
+firstBaseline={drawn.layout.marginTop}
             onSettings={updateSettings}
               onClearOverrides={clearOverrides}
               onActiveGuide={setActiveGuide}
@@ -801,7 +802,9 @@ export function AssignmentMaker() {
         <PageLayoutDialog
           page={layoutDialogPage}
           layout={layoutForPage(s, doc.overrides, layoutDialogPage)}
-          isCustom={Boolean(doc.overrides[layoutDialogPage])}
+pageSize={s.pageSize}
+firstBaseline={layoutForPage(drawn, drawnDoc.overrides, layoutDialogPage).marginTop}
+isCustom={Boolean(doc.overrides[layoutDialogPage])}
           snapped={lineStepFor(layoutDialogPage) !== null}
           look={pageLookControls(layoutDialogPage)}
           onChange={(l) => setPageLayout(layoutDialogPage, l)}

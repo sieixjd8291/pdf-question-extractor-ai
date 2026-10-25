@@ -7,6 +7,7 @@ import {
   isNeutralAdjust,
   type ActiveGuide,
   type AssignmentSettings,
+  type AssignmentDoc,
   type Diagram,
   type HandwritingFont,
   type ImageAdjust,
@@ -22,6 +23,7 @@ export interface RenderInput {
   engine: HandwritingEngine;
   settings: AssignmentSettings;
   overrides: Record<number, PageLayout>;
+  guideDoc?: Pick<AssignmentDoc, 'settings' | 'overrides'>;
   layout: LayoutResult;
   units: string[];
   fontA: HandwritingFont;
@@ -662,6 +664,7 @@ export function pageSignature(input: RenderInput, page: number, base: string): s
   }
   const ov = overrides[page];
   if (ov) h = mixString(h, JSON.stringify(ov));
+  if (input.guideDoc) h = mixString(h, JSON.stringify(layoutForPage(input.guideDoc.settings, input.guideDoc.overrides, page)));
   const pageAdj = input.pageAdjust?.[page];
   if (pageAdj) h = mixString(h, JSON.stringify(pageAdj));
   const pageVar = input.pageVariation?.[page];
@@ -823,12 +826,14 @@ export function renderPage(input: RenderInput, page: number, opts: RenderOptions
       ctx.stroke();
       drawGuidePill(ctx, `Right margin · ${Math.round(L.marginRight)}px`, boxRight, Math.max(46 * scale, boxTop + 34 * scale), scale);
     } else if (ag === 'marginTop') {
-      const firstY = L.marginTop * scale;
+      const requested = input.guideDoc ? layoutForPage(input.guideDoc.settings, input.guideDoc.overrides, page) : L;
+      const firstY = requested.marginTop * scale;
       ctx.beginPath();
       ctx.moveTo(0, firstY);
       ctx.lineTo(out.width, firstY);
       ctx.stroke();
-      drawGuidePill(ctx, `First line · ${Math.round(L.marginTop)}px`, (boxLeft + boxRight) / 2, Math.max(30 * scale, firstY - 24 * scale), scale);
+      const snappedLabel = Math.abs(requested.marginTop - L.marginTop) > 0.5 ? ` · snapped to ${Math.round(L.marginTop)}px` : '';
+      drawGuidePill(ctx, `First line · ${Math.round(requested.marginTop)}px${snappedLabel}`, (boxLeft + boxRight) / 2, Math.max(30 * scale, firstY - 24 * scale), scale);
     } else if (ag === 'marginBottom') {
       ctx.beginPath();
       ctx.moveTo(0, boxBottom);

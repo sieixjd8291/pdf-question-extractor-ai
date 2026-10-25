@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Ban, ChevronDown, Dices, Download, FileArchive, FileImage, FileText, Lock, LockOpen, RotateCcw, X } from 'lucide-react';
 import { useDialog } from '../../hooks/useDialog';
-import { isNeutralAdjust, type ActiveGuide, type ImageAdjust, type PageLayout } from '../../lib/handwriting/catalog';
+import { isNeutralAdjust, type ActiveGuide, type ImageAdjust, type PageLayout, type PageSizeId } from '../../lib/handwriting/catalog';
 import type { ExportFormat } from '../../lib/handwriting/export';
 import { LayoutFields } from './LayoutPanel';
 import { AdjustFields } from './AdjustFields';
@@ -28,6 +28,8 @@ function Dialog({ title, onClose, children, wide }: { title: string; onClose: ()
 export function PageLayoutDialog({
   page,
   layout,
+  pageSize,
+  firstBaseline,
   isCustom,
   snapped,
   look,
@@ -38,6 +40,8 @@ export function PageLayoutDialog({
 }: {
   page: number;
   layout: PageLayout;
+  pageSize: PageSizeId;
+  firstBaseline?: number;
   isCustom: boolean;
   snapped?: boolean;
   look?: PageLookControls;
@@ -80,6 +84,8 @@ export function PageLayoutDialog({
           {look && <PageLookSection page={page} look={look} />}
           <LayoutFields
             layout={layout}
+            pageSize={pageSize}
+            firstBaseline={firstBaseline}
             onChange={(patch) => onChange({ ...layout, ...patch })}
             onActiveGuide={onActiveGuide}
           />
