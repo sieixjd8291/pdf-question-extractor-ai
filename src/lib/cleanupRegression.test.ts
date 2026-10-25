@@ -1,9 +1,23 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { readFileSync, readdirSync } from 'node:fs';
+import { HANDWRITING_FONTS, DEFAULT_SETTINGS, findFont } from './handwriting/catalog';
 import { findProject, type LatexProjectNode, type LatexRootNode } from './latexProjects';
 import { enhancePixels, isSaneQuad as isScannerQuad, NEUTRAL_ADJUSTMENTS, type ScanFilterId } from './scannerFilters';
 import { isSaneQuad as isDetectionQuad } from './edgeDetector';
+
+test('self-hosted font assets match the selectable catalog without orphaned files or missing subsets', () => {
+  const directory = new URL('../../public/fonts/handwriting/', import.meta.url);
+  const css = readFileSync(new URL('fonts.css', directory), 'utf8');
+  const families = new Set([...css.matchAll(/font-family:'([^']+)'/g)].map(match => match[1]));
+  const referencedFiles = new Set([...css.matchAll(/url\('\/fonts\/handwriting\/([^']+)'\)/g)].map(match => match[1]));
+  const fontFiles = new Set(readdirSync(directory).filter(file => file.endsWith('.woff2')));
+  assert.deepEqual(families, new Set(HANDWRITING_FONTS.map(font => font.family)));
+  assert.deepEqual(referencedFiles, fontFiles);
+  for (const file of referencedFiles) assert.ok(readFileSync(new URL(file, directory)).length > 0, `${file} is empty`);
+  assert.equal(findFont('unsupported-font-family'), findFont(DEFAULT_SETTINGS.fontFamily));
+});
 
 const filterHashes: Record<ScanFilterId, string> = {
   original: 'd918770bb0d5e477bd9215b3032620c6405f051d0852d12dba80a332d5fa807b',
