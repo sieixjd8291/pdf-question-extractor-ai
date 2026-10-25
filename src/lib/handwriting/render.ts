@@ -485,7 +485,7 @@ function applyPageSlant(ctx: CanvasRenderingContext2D, slant: { rad: number; px:
     return;
   }
   ctx.translate(slant.px, slant.py);
-  ctx.rotate(slant.rad);
+  ctx.transform(1, Math.tan(slant.rad), 0, 1, 0, 0);
   ctx.translate(x - slant.px, y - slant.py);
 }
 

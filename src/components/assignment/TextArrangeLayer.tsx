@@ -42,10 +42,9 @@ export function clampDelta(bounds: MarginBox, box: MarginBox, dx: number, dy: nu
   const x = Math.min(maxX, Math.max(minX, dx));
   if (!lineStep) return [x, Math.min(maxY, Math.max(minY, dy))];
   // "Write within the lines": vertical moves jump whole ruled lines so text always sits on a rule.
-  let y = Math.round(dy / lineStep) * lineStep;
-  if (y > maxY) y -= lineStep;
-  if (y < minY) y += lineStep;
-  if (y > maxY || y < minY) y = 0;
+  const minStep = Math.ceil(minY / lineStep);
+  const maxStep = Math.floor(maxY / lineStep);
+  const y = Math.min(maxStep, Math.max(minStep, Math.round(dy / lineStep))) * lineStep;
   return [x, y];
 }
 
@@ -87,6 +86,7 @@ interface Props {
   onMove: (patch: Record<string, TextOffset>) => void;
   /** Line height to snap vertical moves to when writing within the lines. */
   lineStep?: number | null;
+  angle?: number;
 }
 
 const MODE_LABEL: Record<ArrangeMode, string> = { line: 'line', word: 'word', page: 'page text' };
@@ -139,7 +139,7 @@ export function TextArrangeLayer(p: Props) {
         sy = pt.y;
       }
       const rawX = sx * k;
-      const rawY = sy * k;
+      const rawY = sy * k - Math.tan((p.angle ?? 0) * Math.PI / 180) * rawX;
       if (!moved && Math.hypot(rawX, rawY) < 3 * k) return;
       moved = true;
       const [dx, dy] = clampDelta(bounds, box, rawX, rawY, lineStep);
@@ -167,7 +167,7 @@ export function TextArrangeLayer(p: Props) {
   const pad = 4;
 
   return (
-    <div className="am-arrange" data-mode={p.mode} role="group" aria-label={`Movable text by ${MODE_LABEL[p.mode]}. Drag to move, Shift+click to group, arrow keys to nudge.`}>
+    <div className="am-arrange" style={p.angle ? { transform: `skewY(${p.angle}deg)`, transformOrigin: `${p.marginBox.left / p.pageW * 100}% 0` } : undefined} data-mode={p.mode} role="group" aria-label={`Movable text by ${MODE_LABEL[p.mode]}. Drag to move, Shift+click to group, arrow keys to nudge.`}>
       {list.map((b) => {
         const isSel = selected.has(b.id);
         return (

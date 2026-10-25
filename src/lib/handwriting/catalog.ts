@@ -201,6 +201,9 @@ export interface PageLayout {
   lineHeight: number;
   /** Slant of the printed ruling in degrees (positive = lines descend to the right); text follows it. */
   angle?: number;
+  /** Resolved at render time; never locks or rewrites the user's slider values. */
+  onLines?: boolean;
+  ruleStep?: number;
 }
 
 /** `photoId` identifies a per-page uploaded photo; without it, `photo` is the document-wide upload. */
