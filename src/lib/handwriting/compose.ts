@@ -50,9 +50,17 @@ export async function loadFont(family: string, sample = 'Handwriting abc'): Prom
 }
 
 export async function registerCustomFont(file: File): Promise<string> {
-  const family = `Custom ${file.name.replace(/\.(ttf|otf|woff2?)$/i, '').slice(0, 40)}`;
-  const face = new FontFace(family, await file.arrayBuffer());
+  return registerFontBuffer(file.name.replace(/\.(ttf|otf|woff2?)$/i, ''), await file.arrayBuffer());
+}
+
+export async function registerFontBuffer(name: string, buffer: ArrayBuffer): Promise<string> {
+  const family = `Custom ${name.slice(0, 40)}`;
+  const face = new FontFace(family, buffer);
   await face.load();
+  // Re-creating a font under the same name must replace the old face, not sit beside it.
+  for (const existing of [...document.fonts]) {
+    if (existing.family.replace(/^"|"$/g, '') === family) document.fonts.delete(existing);
+  }
   document.fonts.add(face);
   return family;
 }
