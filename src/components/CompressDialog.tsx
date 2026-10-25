@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Modal } from './Modal';
-import { findTargetCompression, sampleSizeWeight } from '../lib/scannerCompression';
+import { findTargetCompression, sampleSizeWeight, targetCompressionSettings } from '../lib/scannerCompression';
 
 export interface CompressionSettings {
   quality: number;
@@ -234,13 +234,10 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
     setNote('');
     try {
       // Every choice is measured from the source pages, never a previous compressed export.
-      const result = await findTargetCompression(targetBytes, (l) => totalSize(toSettings(l)));
+      const targetSettings = (l: number) => targetCompressionSettings(l, baseQuality, png);
+      const result = await findTargetCompression(targetBytes, (l) => totalSize(targetSettings(l)));
       if (!mounted.current) return;
-      if (!result.reachable) {
-        setNote(`This target cannot be reached with the available compression. Smallest estimated size: ${formatBytes(result.size)}. Choose a larger target; your previous setting has not changed.`);
-        return;
-      }
-      onApply({ ...toSettings(result.level), targetBytes });
+      onApply({ ...targetSettings(result.level), targetBytes });
     } catch {
       if (mounted.current) setNote('Could not calculate this target. Your previous setting has not changed. Please try again.');
     } finally {
@@ -344,7 +341,7 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
               </select>
             </div>
             {usingTarget && !note && (
-              <span className="compress-hint">Replaces the previous setting when you tap Apply. Sizes are estimates; exported file sizes may differ. Move the slider or type a percentage to switch back.</span>
+              <span className="compress-hint">Custom targets can reduce quality and resolution beyond the slider limits. Each change replaces the previous setting. File sizes are approximate; extremely small targets may exceed the format’s minimum size.</span>
             )}
             {note && <span role="status" className="compress-hint">{note}</span>}
           </div>

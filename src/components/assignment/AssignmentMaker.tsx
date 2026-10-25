@@ -27,6 +27,7 @@ import { PenPanel } from './PenPanel';
 import { StylePanel } from './StylePanel';
 import { RealismPanel } from './RealismPanel';
 import { ExportPanel } from './ExportPanel';
+import { RenameAssignment } from './RenameAssignment';
 import { ExportMenu, HelpDialog, PageAdjustDialog, PageLayoutDialog, PaperDialog, type PageLookControls } from './dialogs';
 import { MobileTabs, type MobileView } from './MobileTabs';
 
@@ -565,12 +566,15 @@ export function AssignmentMaker() {
     onAddDiagram={() => openDiagramPicker(activePage)}
     diagramDisabled={!s.paper}
     exportMenu={
-      <ExportMenu
-        disabled={!s.paper || !pages.input}
-        busy={exportBusy}
-        pageCount={pageCount}
-        onExport={runExport}
-      />
+      <>
+        <ExportMenu
+          disabled={!s.paper || !pages.input}
+          busy={exportBusy}
+          pageCount={pageCount}
+          onExport={runExport}
+        />
+        <RenameAssignment name={s.fileName} disabled={!!exportBusy} onRename={(fileName) => updateSettings({ fileName })} />
+      </>
     }
     onShuffle={() => updateSettings({ seed: Math.floor(Math.random() * 1_000_000) }, false)}
     onHelp={() => setHelpOpen(true)}
