@@ -12,13 +12,20 @@ const LAYOUT_PRESETS: Array<{ id: string; label: string; layout: Partial<PageLay
 
 export function LayoutFields({
   layout,
+  pageSize,
+  firstBaseline = layout.marginTop,
   onChange,
   onActiveGuide,
 }: {
   layout: PageLayout;
+  pageSize: PageSizeId;
+  firstBaseline?: number;
   onChange: (patch: Partial<PageLayout>) => void;
   onActiveGuide?: (guide: ActiveGuide) => void;
 }) {
+  const pageHeight = PAGE_SIZES[pageSize].height;
+  const topMax = Math.max(0, Math.min(1600, Math.floor(pageHeight - layout.marginBottom - Math.max(1, layout.lineHeight / 2))));
+  const bottomMax = Math.max(0, Math.min(1600, Math.floor(pageHeight - Math.max(layout.marginTop, firstBaseline) - 1)));
   return (
     <>
       <SliderField
@@ -47,7 +54,7 @@ export function LayoutFields({
         label="First line (top)"
         value={layout.marginTop}
         min={0}
-        max={1600}
+        max={topMax}
         onChange={(v) => onChange({ marginTop: v })}
         onDragChange={(d) => onActiveGuide?.(d ? 'marginTop' : null)}
         format={(v) => `${v}px`}
@@ -58,7 +65,7 @@ export function LayoutFields({
         label="Bottom margin"
         value={layout.marginBottom}
         min={0}
-        max={1600}
+        max={bottomMax}
         onChange={(v) => onChange({ marginBottom: v })}
         onDragChange={(d) => onActiveGuide?.(d ? 'marginBottom' : null)}
         format={(v) => `${v}px`}
@@ -85,6 +92,7 @@ export function LayoutPanel({
   settings: s,
   overrideCount,
   rulingStatus,
+  firstBaseline,
   onSettings,
   onClearOverrides,
   onActiveGuide,
@@ -95,6 +103,7 @@ export function LayoutPanel({
   settings: AssignmentSettings;
   overrideCount: number;
   rulingStatus: RulingStatus;
+  firstBaseline?: number;
   onSettings: (p: Partial<AssignmentSettings>) => void;
   onClearOverrides: () => void;
   onActiveGuide?: (guide: ActiveGuide) => void;
@@ -169,7 +178,8 @@ export function LayoutPanel({
           </button>
         ))}
       </div>
-      <LayoutFields layout={s.layout} onChange={setLayout} onActiveGuide={onActiveGuide} />
+      <LayoutFields layout={s.layout} pageSize={s.pageSize} firstBaseline={firstBaseline} onChange={setLayout} onActiveGuide={onActiveGuide} />
+      <p className="am-help">The top sets the first baseline. The bottom sets where text flows onto the next page; it does not move short text upward. With line snapping on, handwriting uses the nearest printed row.</p>
       <SliderField
         label="Paragraph indent"
         value={s.paragraphIndent}

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_SETTINGS, findFont, type AssignmentDoc } from './catalog';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { DEFAULT_SETTINGS, PAGE_SIZES, findFont, type AssignmentDoc, type PageSizeId } from './catalog';
+import { LayoutFields } from '../../components/assignment/LayoutPanel';
+import { pageSignature, type RenderInput } from './render';
 import { runLayout, segment } from './compose';
 import type { HandwritingEngine } from './engine';
 import { docOnLines, templateLineStep } from './snapLines';
@@ -52,6 +56,55 @@ test('photo snapping is derived, retaining original slider values', () => {
   assert.equal(drawn.settings.layout.lineHeight % ruling.lineHeight, 0);
   assert.equal(drawn.settings.layout.marginLeft, doc.settings.layout.marginLeft);
   assert.equal(drawn.settings.layout.marginRight, doc.settings.layout.marginRight);
+});
+
+test('top and bottom slider ranges cannot overlap on any supported page size', () => {
+  for (const pageSize of Object.keys(PAGE_SIZES) as PageSizeId[]) {
+    const pageHeight = PAGE_SIZES[pageSize].height;
+    for (const margins of [layout, { ...layout, marginTop: 1000, marginBottom: 90 }, { ...layout, marginTop: 0, marginBottom: pageHeight - 1 }]) {
+      const html = renderToStaticMarkup(createElement(LayoutFields, { layout: margins, pageSize, onChange: () => {} }));
+      const ranges = [...html.matchAll(/<input\b[^>]*type="range"[^>]*>/g)].map(([input]) => Number(/max="([^"]+)"/.exec(input)?.[1]));
+      assert.equal(ranges.length, 5);
+      assert.ok(ranges[2] + margins.marginBottom < pageHeight);
+      assert.ok(ranges[3] + margins.marginTop < pageHeight);
+      assert.ok(ranges[2] >= 0 && ranges[3] >= 0);
+    }
+  }
+});
+
+test('bottom limit leaves room for the photo baseline even above the first detected rule', () => {
+  const html = renderToStaticMarkup(createElement(LayoutFields, {
+    layout: { ...layout, marginTop: 0 }, pageSize: 'a4', firstBaseline: 279, onChange: () => {},
+  }));
+  const ranges = [...html.matchAll(/<input\b[^>]*type="range"[^>]*>/g)].map(([input]) => Number(/max="([^"]+)"/.exec(input)?.[1]));
+  assert.ok(ranges[3] + 279 < PAGE_SIZES.a4.height);
+});
+
+test('a margin guide keeps updating between snapped rows, including customized pages', () => {
+  const doc = document();
+  const flatRuling = { ...ruling, angle: 0, slope: 0 };
+  const drawn = docOnLines(doc, () => flatRuling, () => doc.settings.paper);
+  const input: RenderInput = {
+    engine: {} as HandwritingEngine,
+    settings: drawn.settings,
+    overrides: {},
+    guideDoc: doc,
+    layout: { pages: 1, glyphs: new Float32Array(), glyphCount: 0, strokes: [], glyphsByPage: [[]], blocks: [] },
+    units: [], fontA: findFont(DEFAULT_SETTINGS.fontFamily), fontB: findFont(DEFAULT_SETTINGS.fontFamily),
+    photo: null, images: {}, pagePapers: {},
+  };
+  const first = { ...layout, marginTop: 121 };
+  const second = { ...layout, marginTop: 124 };
+  for (const customized of [false, true]) {
+    const requested = (value: typeof layout): AssignmentDoc => customized
+      ? { ...doc, overrides: { 0: value } }
+      : { ...doc, settings: { ...doc.settings, layout: value } };
+    const a = requested(first);
+    const b = requested(second);
+    assert.equal(docOnLines(a, () => flatRuling, () => a.settings.paper).settings.layout.marginTop,
+      docOnLines(b, () => flatRuling, () => b.settings.paper).settings.layout.marginTop);
+    assert.notEqual(pageSignature({ ...input, guideDoc: a }, 0, 'same-ink'), pageSignature({ ...input, guideDoc: b }, 0, 'same-ink'));
+  }
 });
 
 test('no variation until reroll; individual reroll only changes its page', () => {

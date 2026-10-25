@@ -101,7 +101,7 @@ export function SliderField({ label, value, min, max, step = 1, onChange, format
 
   const clamp = (v: number) => Math.min(max, Math.max(min, Math.round(v / step) * step));
   const display = format ? format(value) : String(Math.round(value * 100) / 100);
-  const pct = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+  const pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
 
   return (
     <div className="am-slider">
@@ -114,7 +114,7 @@ export function SliderField({ label, value, min, max, step = 1, onChange, format
             className="am-mini-btn"
             onClick={() => {
               pulseDrag();
-              onChange(defaultValue);
+              onChange(clamp(defaultValue));
             }}
             aria-label={`Reset ${label}`}
             title={`Reset ${label}`}
@@ -144,18 +144,19 @@ export function SliderField({ label, value, min, max, step = 1, onChange, format
           max={max}
           step={step}
           value={value}
-          onPointerDown={() => {
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
             setDragging(true);
-            const end = () => {
-              window.removeEventListener('pointerup', end);
-              window.removeEventListener('pointercancel', end);
-              setDragging(false);
-            };
-            window.addEventListener('pointerup', end);
-            window.addEventListener('pointercancel', end);
+          }}
+          onPointerUp={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
+          onLostPointerCapture={() => setDragging(false)}
+          onBlur={() => setDragging(false)}
+          onKeyDown={(e) => {
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) pulseDrag();
           }}
           onChange={(e) => onChange(Number(e.target.value))}
-          style={{ ['--fill' as string]: `${pct}%` }}
+          style={{ ['--fill' as string]: `${pct}%`, touchAction: 'none' }}
         />
         {stepper && (
           <button
