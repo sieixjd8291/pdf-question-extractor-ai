@@ -1145,7 +1145,15 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
   };
 
   useEffect(() => {
-    warmUpOrientationModel();
+    // Low-power devices load the model on first use instead of competing with the camera/import.
+    if (isLowPowerDevice()) return;
+    const idle = window.requestIdleCallback?.bind(window);
+    if (idle) {
+      const id = idle(() => warmUpOrientationModel(), { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(warmUpOrientationModel, 2000);
+    return () => window.clearTimeout(t);
   }, []);
 
   // Wheel zoom (desktop) — needs a non-passive listener to stop page scroll.
