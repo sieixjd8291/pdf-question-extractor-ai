@@ -3050,8 +3050,7 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
 }
 .scanner-name-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-/* Mobile: the inline name field is replaced by a pencil icon that opens a rename dialog. */
-.scanner-rename-btn { display: none; }
+.scanner-rename-btn { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .scanner-export-wrap { position: relative; }
 .scanner-export-caret { margin-left: 2px; opacity: 0.85; }
 

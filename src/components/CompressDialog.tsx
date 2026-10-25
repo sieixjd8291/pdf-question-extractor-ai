@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Modal } from './Modal';
+import { findTargetCompression, sampleSizeWeight } from '../lib/scannerCompression';
 
 export interface CompressionSettings {
   quality: number;
@@ -8,6 +9,7 @@ export interface CompressionSettings {
   /** Longest side in pixels pages are capped to; 0 means no cap. */
   maxEdge: number;
   level: number;
+  targetBytes?: number;
 }
 
 interface CompressDialogProps {
@@ -103,7 +105,8 @@ async function encodeSize(sample: Sample, s: CompressionSettings, png: boolean):
     source.width = 0;
     source.height = 0;
   }
-  return blob?.size ?? 0;
+  if (!blob) throw new Error('Could not encode this page.');
+  return blob.size * sampleSizeWeight(sample.weight, fullScale, sampleScale);
 }
 
 function formatBytes(bytes: number) {
@@ -119,13 +122,22 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
   const [originalSize, setOriginalSize] = useState(0);
   const [level, setLevel] = useState(current?.level ?? 40);
   const [estimate, setEstimate] = useState(0);
-  const [targetValue, setTargetValue] = useState('');
+  const [targetValue, setTargetValue] = useState(current?.targetBytes ? String(current.targetBytes / 1024) : '');
   const [unit, setUnit] = useState<'KB' | 'MB'>('KB');
+  const [applying, setApplying] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const runId = useRef(0);
-  const toSettings = (l: number): CompressionSettings =>
-    png ? { quality: 1, scale: 1 - (0.5 * l) / 100, maxEdge: 0, level: l } : settingsForLevel(l);
+  const toSettings = (l: number): CompressionSettings => {
+    if (png) return { quality: 1, scale: 1 - (0.5 * l) / 100, maxEdge: 0, level: l };
+    const settings = settingsForLevel(l);
+    return { ...settings, quality: baseQuality - (Math.max(0, baseQuality - 0.76) * l) / 100 };
+  };
 
   // Sizes are measured on a few downscaled sample pages and extrapolated, so a
   // 300-page document costs the same memory and time as a 3-page one.
@@ -134,7 +146,7 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
     if (samples.length === 0) return 0;
     let sum = 0;
     for (const sample of samples) {
-      sum += (await encodeSize(sample, st, png)) * sample.weight;
+      sum += await encodeSize(sample, st, png);
       await new Promise<void>((r) => window.setTimeout(r, 0));
     }
     return Math.round((sum * pageCount) / samples.length);
@@ -187,13 +199,16 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
     const id = ++runId.current;
     setWorking(true);
     const t = window.setTimeout(async () => {
-      const size = await totalSize(toSettings(level));
-      if (id === runId.current) {
-        setEstimate(size);
-        setWorking(false);
+      try {
+        const size = await totalSize(toSettings(level));
+        if (id === runId.current) setEstimate(size);
+      } catch {
+        if (id === runId.current) setError('Could not estimate compression. Close and try again.');
+      } finally {
+        if (id === runId.current) setWorking(false);
       }
     }, 150);
-    return () => window.clearTimeout(t);
+    return () => { window.clearTimeout(t); runId.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, ready]);
 
@@ -209,38 +224,28 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
   }, [targetValue, unit]);
   const usingTarget = targetBytes > 0;
 
-  // Finds the lightest level that reaches the target size.
-  const levelForTarget = async (): Promise<{ level: number; reachable: boolean }> => {
-    let lo = 0;
-    let hi = 100;
-    let best = 100;
-    for (let i = 0; i < 7; i++) {
-      const mid = (lo + hi) / 2;
-      const size = await totalSize(toSettings(mid));
-      if (size <= targetBytes) {
-        best = mid;
-        hi = mid;
-      } else {
-        lo = mid;
-      }
-    }
-    const finalSize = await totalSize(toSettings(best));
-    return { level: Math.round(best), reachable: finalSize <= targetBytes * 1.05 };
-  };
-
   const handleApply = async () => {
+    if (applying) return;
     if (!usingTarget) {
       onApply(toSettings(level));
       return;
     }
-    if (targetBytes >= originalSize) {
-      setNote('Target is larger than the current size, so nothing needs compressing.');
-      return;
+    setApplying(true);
+    setNote('');
+    try {
+      // Every choice is measured from the source pages, never a previous compressed export.
+      const result = await findTargetCompression(targetBytes, (l) => totalSize(toSettings(l)));
+      if (!mounted.current) return;
+      if (!result.reachable) {
+        setNote(`This target cannot be reached with the available compression. Smallest estimated size: ${formatBytes(result.size)}. Choose a larger target; your previous setting has not changed.`);
+        return;
+      }
+      onApply({ ...toSettings(result.level), targetBytes });
+    } catch {
+      if (mounted.current) setNote('Could not calculate this target. Your previous setting has not changed. Please try again.');
+    } finally {
+      if (mounted.current) setApplying(false);
     }
-    setWorking(true);
-    const result = await levelForTarget();
-    setWorking(false);
-    onApply(toSettings(result.level));
   };
 
   return (
@@ -259,7 +264,7 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
           <button className="btn secondary btn-sm" onClick={onClose}>Cancel</button>
           <button
             className="btn btn-sm"
-            disabled={!ready || working}
+            disabled={!ready || working || applying || !!error || (targetValue !== '' && !usingTarget)}
             onClick={() => void handleApply()}
           >
             Apply
@@ -286,27 +291,46 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
               {!usingTarget && !working && savedPct > 0 && ` (−${savedPct}%)`}
             </span>
           </div>
-          <label className="compress-field">
-            <span className="compress-field-head">
+          <div className="compress-field">
+            <label className="compress-field-head" htmlFor="scanner-compression-level">
               <span>Compression level</span>
               <span>{usingTarget ? 'Set by target size' : `${level < 25 ? 'Light' : level < 60 ? 'Balanced' : level < 85 ? 'Strong' : 'Maximum'} · ${level}%`}</span>
-            </span>
+            </label>
             <input
+              id="scanner-compression-level"
               type="range"
               min={0}
               max={100}
               step={1}
+              disabled={applying}
               value={level}
               onChange={(e) => { setNote(''); setTargetValue(''); setLevel(Number(e.target.value)); }}
               className="compress-range"
             />
-          </label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              aria-label="Compression percentage"
+              value={level}
+              disabled={applying}
+              onChange={(e) => {
+                setNote('');
+                setTargetValue('');
+                setLevel(Math.min(100, Math.max(0, Math.round(Number(e.target.value) || 0))));
+              }}
+              className="compress-target-input"
+            />
+          </div>
           <div className="compress-field">
             <span>Or set a custom target size</span>
             <div className="compress-target">
               <input
                 type="number"
-                min={1}
+                min={0.001}
+                step="any"
+                disabled={applying}
                 inputMode="decimal"
                 placeholder="e.g. 500"
                 aria-label="Target size"
@@ -314,13 +338,13 @@ export function CompressDialog({ format, baseQuality, current, pageCount, render
                 onChange={(e) => { setNote(''); setTargetValue(e.target.value); }}
                 className="compress-target-input"
               />
-              <select aria-label="Size unit" value={unit} onChange={(e) => setUnit(e.target.value as 'KB' | 'MB')}>
+              <select aria-label="Size unit" value={unit} disabled={applying} onChange={(e) => { setNote(''); setUnit(e.target.value as 'KB' | 'MB'); }}>
                 <option value="KB">KB</option>
                 <option value="MB">MB</option>
               </select>
             </div>
             {usingTarget && !note && (
-              <span className="compress-hint">Applied when you tap Apply. Move the slider to switch back.</span>
+              <span className="compress-hint">Replaces the previous setting when you tap Apply. Sizes are estimates; exported file sizes may differ. Move the slider or type a percentage to switch back.</span>
             )}
             {note && <span role="status" className="compress-hint">{note}</span>}
           </div>
