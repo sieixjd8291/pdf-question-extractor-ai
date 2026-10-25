@@ -9,6 +9,7 @@ import {
   mapBookChaptersHandler,
   validateCropHandler,
   validateGeminiKeyHandler,
+  transcribeHandwritingHandler,
   resolveApiKey,
   AiHandlerResult,
   GEMINI_MODEL_CHAIN,
@@ -87,6 +88,9 @@ app.post("/api/map-book-chapters", aiRoute((req) =>
 
 app.post("/api/detect-chapter-title", aiRoute((req) =>
   detectChapterTitleHandler(req.body, keyFromRequest(req))));
+
+app.post("/api/transcribe-handwriting", aiRoute((req) =>
+  transcribeHandwritingHandler(req.body, keyFromRequest(req))));
 
 app.post("/api/validate-gemini-key", aiRoute(async (req) => {
   const hasKey = Boolean(req.headers["x-gemini-api-key"] || process.env.GEMINI_API_KEY);

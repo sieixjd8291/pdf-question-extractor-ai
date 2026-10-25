@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, ImagePlus, Merge, Scissors, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { CheckCircle2, AlertTriangle, Download, ImagePlus, Merge, Scissors, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { Dialog } from './dialogs';
+import { geminiAuthHeaders } from '../../lib/geminiSettings';
 import {
   buildFontFromSamples,
   loadSampleImage,
@@ -14,49 +15,69 @@ import {
 
 const DEFAULT_TEXT = 'The quick brown fox jumps over the lazy dog';
 const BASIC_SET = Array.from('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,?!\'');
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg';
 
 interface Sample {
   id: number;
   name: string;
   url: string;
+  aiImage: string;
   ink: InkMap;
   text: string;
   rows: SampleRow[];
   error?: string;
+  reading?: boolean;
+  aiNote?: string;
 }
 
 type Selection = { row: number; index: number } | null;
 
+async function readHandwriting(imageData: string): Promise<string> {
+  const res = await fetch('/api/transcribe-handwriting', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...geminiAuthHeaders() },
+    body: JSON.stringify({ imageData }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'AI could not read the image.');
+  const lines: string[] = Array.isArray(data.lines) ? data.lines : [];
+  if (!lines.length) throw new Error('AI found no handwriting in this image.');
+  return lines.join('\n');
+}
+
 function SampleOverlay({ sample, selection, onSelect }: { sample: Sample; selection: Selection; onSelect: (s: Selection) => void }) {
   const { ink, rows } = sample;
-  const labelSize = Math.max(14, ink.height * 0.035);
+  const labelSize = Math.max(14, Math.min(ink.width, ink.height * 4) * 0.012);
   return (
     <div className="am-sf-stage">
-      <img src={sample.url} alt={`Handwriting sample ${sample.name}`} />
-      <svg viewBox={`0 0 ${ink.width} ${ink.height}`} preserveAspectRatio="none" aria-hidden="true">
-        {rows.map((row, r) => {
-          const ok = rowMatched(row);
-          return row.pieces.map((p, i) => {
-            const active = selection?.row === r && selection.index === i;
-            return (
-              <g key={`${r}-${i}`} className={`am-sf-piece ${ok ? 'ok' : 'off'} ${active ? 'active' : ''}`} onClick={() => onSelect(active ? null : { row: r, index: i })}>
-                <rect x={p.x0 - 2} y={p.y0 - 2} width={p.x1 - p.x0 + 5} height={p.y1 - p.y0 + 5} rx={3} />
-                <text x={(p.x0 + p.x1) / 2} y={p.y0 - 8} fontSize={labelSize} textAnchor="middle">{row.letters[i] ?? '?'}</text>
-              </g>
-            );
-          });
-        })}
-      </svg>
+      <div className="am-sf-canvas">
+        <img src={sample.url} alt={`Handwriting sample ${sample.name}`} />
+        <svg viewBox={`0 0 ${ink.width} ${ink.height}`} preserveAspectRatio="none" aria-hidden="true">
+          {rows.map((row, r) => {
+            const ok = rowMatched(row);
+            return row.pieces.map((p, i) => {
+              const active = selection?.row === r && selection.index === i;
+              return (
+                <g key={`${r}-${i}`} className={`am-sf-piece ${ok ? 'ok' : 'off'} ${active ? 'active' : ''}`} onClick={() => onSelect(active ? null : { row: r, index: i })}>
+                  <rect x={p.x0 - 2} y={p.y0 - 2} width={p.x1 - p.x0 + 5} height={p.y1 - p.y0 + 5} rx={3} />
+                  <text x={(p.x0 + p.x1) / 2} y={p.y0 - 6} fontSize={labelSize} textAnchor="middle">{row.letters[i] ?? '?'}</text>
+                </g>
+              );
+            });
+          })}
+        </svg>
+      </div>
     </div>
   );
 }
 
 export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, buffer: ArrayBuffer) => Promise<void> }) {
   const [samples, setSamples] = useState<Sample[]>([]);
-  const [active, setActive] = useState(0);
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [fontName, setFontName] = useState('My handwriting');
   const [busy, setBusy] = useState<'load' | 'build' | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(1);
@@ -64,37 +85,58 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
 
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
-  const current = samples[active];
+  const activeIndex = samples.findIndex((s) => s.id === activeId);
+  const current = activeIndex >= 0 ? samples[activeIndex] : undefined;
 
-  const updateCurrent = (patch: (s: Sample) => Sample) => {
-    setSamples((prev) => prev.map((s, i) => (i === active ? patch(s) : s)));
+  const updateSample = (id: number, patch: (s: Sample) => Sample) => {
+    setSamples((prev) => prev.map((s) => (s.id === id ? patch(s) : s)));
   };
 
-  const addSample = async (file: File) => {
+  const applyText = (s: Sample, text: string): Sample => {
+    const seg = segmentSample(s.ink, text);
+    return { ...s, text, rows: seg.rows, error: seg.error };
+  };
+
+  const runAi = async (id: number, aiImage: string) => {
+    updateSample(id, (s) => ({ ...s, reading: true, aiNote: undefined }));
+    try {
+      const text = await readHandwriting(aiImage);
+      updateSample(id, (s) => ({ ...applyText(s, text), reading: false, aiNote: 'Read by AI. Check every character before creating the font.' }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'AI could not read the image.';
+      updateSample(id, (s) => ({ ...s, reading: false, aiNote: `${message} Type the text yourself instead.` }));
+    }
+    setSelection(null);
+  };
+
+  const addFiles = async (files: File[]) => {
+    const images = files.filter((f) => /^image\/(png|jpeg|webp|svg\+xml)$/.test(f.type) || /\.(png|jpe?g|webp|svg)$/i.test(f.name));
+    if (!images.length) {
+      setError('Use a PNG, JPG, WEBP or SVG image.');
+      return;
+    }
     setBusy('load');
     setError(null);
-    try {
-      const { ink, url } = await loadSampleImage(file);
-      urls.current.push(url);
-      const text = samples.length ? '' : DEFAULT_TEXT;
-      const seg = segmentSample(ink, text);
-      const sample: Sample = { id: nextId.current++, name: file.name, url, ink, text, rows: seg.rows, error: seg.error };
-      setSamples((prev) => [...prev, sample]);
-      setActive(samples.length);
-      setSelection(null);
-    } catch {
-      setError('That image could not be read. Use a PNG, JPG or SVG file.');
-    } finally {
-      setBusy(null);
+    for (const file of images) {
+      try {
+        const { ink, url, aiImage } = await loadSampleImage(file);
+        urls.current.push(url);
+        const id = nextId.current++;
+        setSamples((prev) => [...prev, { id, name: file.name, url, aiImage, ink, text: '', rows: [] }]);
+        setActiveId(id);
+        setSelection(null);
+        void runAi(id, aiImage);
+      } catch {
+        setError(`${file.name} could not be read. Use a PNG, JPG, WEBP or SVG file.`);
+      }
     }
+    setBusy(null);
   };
 
   const setText = (text: string) => {
+    if (!current) return;
     setSelection(null);
-    updateCurrent((s) => {
-      const seg = segmentSample(s.ink, text);
-      return { ...s, text, rows: seg.rows, error: seg.error };
-    });
+    updateSample(current.id, (s) => applyText(s, text));
   };
 
   const editPieces = (fn: (pieces: SampleRow['pieces'], ink: InkMap) => SampleRow['pieces'] | null) => {
@@ -102,13 +144,14 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
     const row = current.rows[selection.row];
     const next = fn(row.pieces, current.ink);
     if (!next) return;
-    updateCurrent((s) => ({ ...s, rows: s.rows.map((r, i) => (i === selection.row ? { ...r, pieces: next } : r)) }));
+    updateSample(current.id, (s) => ({ ...s, rows: s.rows.map((r, i) => (i === selection.row ? { ...r, pieces: next } : r)) }));
     setSelection(null);
   };
 
-  const removeSample = (index: number) => {
-    setSamples((prev) => prev.filter((_, i) => i !== index));
-    setActive((a) => Math.max(0, a >= index ? a - 1 : a));
+  const removeSample = (id: number) => {
+    const remaining = samples.filter((s) => s.id !== id);
+    setSamples(remaining);
+    if (activeId === id) setActiveId(remaining.length ? remaining[Math.max(0, activeIndex - 1)].id : null);
     setSelection(null);
   };
 
@@ -149,95 +192,162 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
   };
 
   const selectedRow = selection && current ? current.rows[selection.row] : null;
+  const matchedRows = current ? current.rows.filter(rowMatched).length : 0;
+  const anyReading = samples.some((s) => s.reading);
+
+  const dropProps = {
+    onDragOver: (e: DragEvent) => { e.preventDefault(); setDragging(true); },
+    onDragLeave: () => setDragging(false),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      void addFiles(Array.from(e.dataTransfer.files));
+    },
+  };
 
   return (
-    <Dialog title="Make a font from a handwriting sample" onClose={onClose} wide>
-      <p className="am-sf-intro">
-        Upload a photo or SVG of handwriting and type exactly what it says. Each letter is cut out automatically and turned into a font. Add more samples to cover capitals, numbers and punctuation.
-      </p>
+    <Dialog title="Make a font from your handwriting" onClose={onClose} wide>
+      <div className="am-sf">
+        <div className="am-sf-side">
+          <p className="am-sf-intro">
+            Upload a PNG, JPG or SVG of your handwriting. AI reads every character, then each letter is cut out and turned into a font.
+          </p>
 
-      <div className="am-sf-tabs" role="tablist" aria-label="Samples">
-        {samples.map((s, i) => (
-          <span key={s.id} className={`am-sf-tab ${i === active ? 'active' : ''}`}>
-            <button type="button" role="tab" aria-selected={i === active} onClick={() => { setActive(i); setSelection(null); }}>
-              Sample {i + 1}
-            </button>
-            <button type="button" className="am-sf-tab-x" aria-label={`Remove sample ${i + 1}`} onClick={() => removeSample(i)}><X size={12} /></button>
-          </span>
-        ))}
-        <button type="button" className="btn secondary btn-sm" disabled={busy === 'load'} onClick={() => fileRef.current?.click()}>
-          <ImagePlus size={14} />{busy === 'load' ? 'Reading…' : samples.length ? 'Add sample' : 'Choose image or SVG'}
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) void addSample(f);
-          }}
-        />
-      </div>
+          <div className="am-sf-tabs" role="tablist" aria-label="Samples">
+            {samples.map((s, i) => (
+              <span key={s.id} className={`am-sf-tab ${s.id === activeId ? 'active' : ''}`}>
+                <button type="button" role="tab" aria-selected={s.id === activeId} onClick={() => { setActiveId(s.id); setSelection(null); }}>
+                  Sample {i + 1}
+                </button>
+                <button type="button" className="am-sf-tab-x" aria-label={`Remove sample ${i + 1}`} onClick={() => removeSample(s.id)}><X size={12} /></button>
+              </span>
+            ))}
+            {samples.length > 0 && (
+              <button type="button" className="btn secondary btn-sm" disabled={busy === 'load'} onClick={() => fileRef.current?.click()}>
+                <ImagePlus size={14} />{busy === 'load' ? 'Reading…' : 'Add sample'}
+              </button>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept={ACCEPT}
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = '';
+                if (files.length) void addFiles(files);
+              }}
+            />
+          </div>
 
-      {current ? (
-        <>
-          <label className="am-sf-field">
-            <span>What does it say? Lines of writing are detected automatically.</span>
-            <textarea className="am-textarea am-sf-text" value={current.text} onChange={(e) => setText(e.target.value)} rows={2} spellCheck={false} />
-          </label>
+          {current ? (
+            <>
+              <div className="am-sf-field">
+                <div className="am-sf-field-head">
+                  <label htmlFor="am-sf-text">What does it say?</label>
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm"
+                    disabled={current.reading}
+                    onClick={() => void runAi(current.id, current.aiImage)}
+                  >
+                    <Sparkles size={14} />{current.reading ? 'Reading…' : 'Read with AI'}
+                  </button>
+                </div>
+                <textarea
+                  id="am-sf-text"
+                  className="am-textarea am-sf-text"
+                  value={current.text}
+                  onChange={(e) => setText(e.target.value)}
+                  rows={5}
+                  spellCheck={false}
+                  disabled={current.reading}
+                  placeholder={current.reading ? 'AI is reading each character…' : 'Type the text exactly as written, one line per row of writing.'}
+                />
+                {current.aiNote && <p className="am-sf-note">{current.aiNote}</p>}
+              </div>
 
-          {current.error ? (
-            <p className="am-sf-status off" role="alert">{current.error}</p>
+              {!current.reading && current.text.trim() && (
+                current.error ? (
+                  <p className="am-sf-status off" role="alert"><AlertTriangle size={14} />{current.error}</p>
+                ) : (
+                  <div className="am-sf-summary" aria-live="polite">
+                    <p className={`am-sf-status ${matchedRows === current.rows.length ? 'ok' : 'off'}`}>
+                      {matchedRows === current.rows.length ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                      {matchedRows} of {current.rows.length} lines matched
+                    </p>
+                    <ul className="am-sf-rows">
+                      {current.rows.map((row, r) => (
+                        <li key={r} className={rowMatched(row) ? 'ok' : 'off'}>
+                          <span className="am-sf-row-text">{row.text}</span>
+                          <span className="am-sf-row-count">{row.pieces.length}/{row.letters.length}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              )}
+            </>
           ) : (
-            <ul className="am-sf-rows" aria-live="polite">
-              {current.rows.map((row, r) => (
-                <li key={r} className={`am-sf-status ${rowMatched(row) ? 'ok' : 'off'}`}>
-                  Line {r + 1} “{row.text}”: {row.pieces.length} pieces found for {row.letters.length} letters
-                  {rowMatched(row) ? ' — matched' : ' — click a box to merge, split or remove it'}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <SampleOverlay sample={current} selection={selection} onSelect={setSelection} />
-
-          {selection && selectedRow && (
-            <div className="am-sf-actions">
-              <span>Selected: <strong>{selectedRow.letters[selection.index] ?? 'extra piece'}</strong></span>
-              <button
-                type="button"
-                className="btn secondary btn-sm"
-                disabled={selection.index >= selectedRow.pieces.length - 1}
-                onClick={() => editPieces((p, ink) => [...p.slice(0, selection.index), mergePieces(ink, p[selection.index], p[selection.index + 1]), ...p.slice(selection.index + 2)])}
-              >
-                <Merge size={14} />Merge with next
-              </button>
-              <button
-                type="button"
-                className="btn secondary btn-sm"
-                onClick={() => editPieces((p, ink) => {
-                  const halves = splitPiece(ink, p[selection.index]);
-                  return halves ? [...p.slice(0, selection.index), ...halves, ...p.slice(selection.index + 1)] : null;
-                })}
-              >
-                <Scissors size={14} />Split in two
-              </button>
-              <button type="button" className="btn secondary btn-sm" onClick={() => editPieces((p) => p.filter((_, i) => i !== selection.index))}>
-                <Trash2 size={14} />Remove
-              </button>
+            <div className="am-sf-empty">
+              <p>Write with a dark pen on plain paper and leave a clear gap between lines. An alphabet, digits and a sentence like “{DEFAULT_TEXT}” cover most characters.</p>
             </div>
           )}
-        </>
-      ) : (
-        <div className="am-sf-empty">
-          <p>Write a sentence that uses many letters, such as “{DEFAULT_TEXT}”, with a dark pen on plain paper. Leave a clear gap between words and between lines.</p>
-          <p>An SVG downloaded from a handwriting generator works too, if its terms allow you to reuse the output.</p>
         </div>
-      )}
 
-      {error && <p className="am-sf-status off" role="alert">{error}</p>}
+        <div className="am-sf-main">
+          {current ? (
+            <>
+              <SampleOverlay sample={current} selection={selection} onSelect={setSelection} />
+              <div className="am-sf-actions">
+                {selection && selectedRow ? (
+                  <>
+                    <span>Selected: <strong>{selectedRow.letters[selection.index] ?? 'extra piece'}</strong></span>
+                    <button
+                      type="button"
+                      className="btn secondary btn-sm"
+                      disabled={selection.index >= selectedRow.pieces.length - 1}
+                      onClick={() => editPieces((p, ink) => [...p.slice(0, selection.index), mergePieces(ink, p[selection.index], p[selection.index + 1]), ...p.slice(selection.index + 2)])}
+                    >
+                      <Merge size={14} />Merge with next
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary btn-sm"
+                      onClick={() => editPieces((p, ink) => {
+                        const halves = splitPiece(ink, p[selection.index]);
+                        return halves ? [...p.slice(0, selection.index), ...halves, ...p.slice(selection.index + 1)] : null;
+                      })}
+                    >
+                      <Scissors size={14} />Split
+                    </button>
+                    <button type="button" className="btn secondary btn-sm" onClick={() => editPieces((p) => p.filter((_, i) => i !== selection.index))}>
+                      <Trash2 size={14} />Remove
+                    </button>
+                  </>
+                ) : (
+                  <span className="am-sf-hint">Blue boxes are matched. Click an orange box to merge, split or remove it.</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={`am-sf-drop ${dragging ? 'dragging' : ''}`}
+              disabled={busy === 'load'}
+              onClick={() => fileRef.current?.click()}
+              {...dropProps}
+            >
+              <Upload size={22} aria-hidden="true" />
+              <strong>{busy === 'load' ? 'Reading image…' : 'Drop handwriting images here'}</strong>
+              <span>or click to choose PNG, JPG, WEBP or SVG</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="am-sf-status off" role="alert"><AlertTriangle size={14} />{error}</p>}
 
       <footer className="am-sf-foot">
         <label className="am-text-field am-sf-name">
@@ -246,13 +356,13 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
         </label>
         <p className="am-sf-coverage">
           {covered.size ? `${covered.size} characters ready.` : 'No characters ready yet.'}
-          {covered.size > 0 && missing.length > 0 && ` Missing letters use the default font: ${missing.join(' ')}`}
+          {covered.size > 0 && missing.length > 0 && ` Missing (default font used): ${missing.join(' ')}`}
         </p>
         <div className="am-sf-buttons">
-          <button type="button" className="btn secondary btn-sm" disabled={!covered.size || busy !== null} onClick={() => void download()}>
+          <button type="button" className="btn secondary btn-sm" disabled={!covered.size || busy !== null || anyReading} onClick={() => void download()}>
             <Download size={14} />Download .otf
           </button>
-          <button type="button" className="btn primary btn-sm" disabled={!covered.size || busy !== null} onClick={() => void create()}>
+          <button type="button" className="btn primary btn-sm" disabled={!covered.size || busy !== null || anyReading} onClick={() => void create()}>
             {busy === 'build' ? 'Building…' : 'Create font'}
           </button>
         </div>
