@@ -58,6 +58,27 @@ test('photo snapping is derived, retaining original slider values', () => {
   assert.equal(drawn.settings.layout.marginRight, doc.settings.layout.marginRight);
 });
 
+test('first-line slider can reach the photo top instead of clamping to its first printed rule', () => {
+  const photoRuling = { ...ruling, firstLine: 279, lineHeight: 48.44 };
+  for (const customized of [false, true]) {
+    for (const top of [0, 1, 40, 80, 160]) {
+      const doc = document();
+      const desired = { ...layout, marginTop: top };
+      if (customized) doc.overrides[0] = desired;
+      else doc.settings = { ...doc.settings, layout: desired };
+      const drawn = docOnLines(doc, () => photoRuling, () => doc.settings.paper);
+      const actual = customized ? drawn.overrides[0] : drawn.settings.layout;
+      const minimumBaseline = Math.ceil(doc.settings.fontSize * Math.max(1, doc.settings.headingScale));
+      assert.equal(actual.marginTop, Math.max(top, minimumBaseline));
+      assert.ok(actual.marginTop < photoRuling.firstLine);
+      assert.equal(actual.lineHeight, 48.44);
+      assert.equal(actual.angle, photoRuling.angle);
+      assert.equal(actual.marginBottom, desired.marginBottom);
+      assert.equal((customized ? doc.overrides[0] : doc.settings.layout).marginTop, top);
+    }
+  }
+});
+
 test('top and bottom slider ranges cannot overlap on any supported page size', () => {
   for (const pageSize of Object.keys(PAGE_SIZES) as PageSizeId[]) {
     const pageHeight = PAGE_SIZES[pageSize].height;
