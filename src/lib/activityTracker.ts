@@ -1,4 +1,4 @@
-import type { ActivityEntry, AppMode } from '../types';
+import type { ActivityEntry } from '../types';
 
 /**
  * Usage history for the dashboard — one ActivityEntry per tool run.

@@ -11,12 +11,12 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "tsx --test src/lib/*.test.ts src/lib/handwriting/*.test.ts",
     "prepare:pdf": "node scripts/copy-pdf-assets.mjs",
     "check": "npm run lint && npm run build"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.86",
-    "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.45.0",
     "ai": "^7.0.123",
     "dotenv": "^17.2.3",

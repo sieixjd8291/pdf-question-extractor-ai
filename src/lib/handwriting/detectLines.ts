@@ -1,5 +1,3 @@
-import type { PageLayout } from './catalog';
-
 export interface DetectedRuling {
   lineHeight: number;
   /** First ruled line usable as a baseline, in page units. */
@@ -192,56 +190,5 @@ export function detectRuling(img: HTMLImageElement, pageW: number, pageH: number
     angle: Number(((Math.atan(bestSlope) * 180) / Math.PI).toFixed(2)),
     slope: bestSlope,
     centerX: xc * f,
-  };
-}
-
-/** Converts detected ruling into a page layout that writes on the printed lines. */
-export function layoutFromRuling(ruling: DetectedRuling, current: PageLayout, pageH: number): PageLayout {
-  const marginLeft = ruling.marginRule !== null ? Math.round(ruling.marginRule + 14) : current.marginLeft;
-  // Text is rotated about (marginLeft, marginTop), so measure the first line where it crosses the left margin.
-  const marginTop = ruling.firstLine + ruling.slope * (marginLeft - ruling.centerX);
-  return {
-    marginLeft,
-    marginRight: current.marginRight,
-    marginTop: Math.round(marginTop * 10) / 10,
-    marginBottom: Math.max(10, Math.floor(pageH - ruling.lastLine - 1)),
-    lineHeight: ruling.lineHeight,
-    angle: ruling.angle,
-  };
-}
-
-/**
- * Keeps a user-edited layout aligned with the printed lines' tilt while leaving
- * every slider value exactly where the user dragged it.
- */
-/**
- * Keeps a page's own layout choices (margins, how far down it starts) but locks
- * the line spacing, first baseline and tilt onto the detected ruled lines.
- */
-export function fitLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
-  const lh = ruling.lineHeight;
-  const firstAtMargin = ruling.firstLine + ruling.slope * (desired.marginLeft - ruling.centerX);
-  const steps = Math.max(0, Math.round((desired.marginTop - firstAtMargin) / lh));
-  return {
-    ...desired,
-    lineHeight: lh,
-    marginTop: Math.round((firstAtMargin + steps * lh) * 10) / 10,
-    marginBottom: Math.min(pageH, Math.max(desired.marginBottom, Math.floor(pageH - ruling.lastLine - 1))),
-    angle: ruling.angle,
-  };
-}
-
-export function layoutsDiffer(a: PageLayout, b: PageLayout): boolean {
-  return (
-    Math.abs((a.angle ?? 0) - (b.angle ?? 0)) > 0.01 ||
-    (['marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'lineHeight'] as const).some((k) => Math.abs(a[k] - b[k]) > 0.05)
-  );
-}
-
-export function snapLayoutToRuling(ruling: DetectedRuling, desired: PageLayout, pageH: number): PageLayout {
-  return {
-    ...desired,
-    marginBottom: Math.max(0, Math.min(pageH, desired.marginBottom)),
-    angle: ruling.angle,
   };
 }

@@ -943,7 +943,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     }
 
     if (mode === 'new-file' && targetId) {
-      const project = findProjectNode(tree, targetId);
+      const project = findProject(tree, targetId);
       if (!project) return;
       const name = uniqueName(project.files, sanitizeFileName(raw) || 'untitled.tex');
       const res = addFile(tree, targetId, name);
@@ -1060,7 +1060,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
         projectName = created.project.name;
         targetId = created.project.id;
       } else {
-        const project = findProjectNode(tree, targetId);
+        const project = findProject(tree, targetId);
         const name = uniqueName(project?.files ?? [], wanted);
         const res = addFile(tree, targetId, name, text);
         nextTree = res.tree;
@@ -1335,7 +1335,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
         if (current && current.project.id !== projectId) {
           nextTree = moveFile(tree, dragNode.id, projectId);
           setExpandedIds((prev) => new Set(prev).add(projectId));
-          toast.success(`File moved to “${findProjectNode(tree, projectId)?.name ?? 'project'}”.`);
+          toast.success(`File moved to “${findProject(tree, projectId)?.name ?? 'project'}”.`);
         }
       }
       if (nextTree) {
@@ -1574,7 +1574,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     if (moveDialog.type === 'file') {
       if (!targetId) return;
       nextTree = moveFile(ws.tree, moveDialog.id, targetId);
-      toast.success(`File moved to “${findProjectNode(tree, targetId)?.name ?? 'project'}”.`);
+      toast.success(`File moved to “${findProject(tree, targetId)?.name ?? 'project'}”.`);
     } else {
       nextTree = moveProject(ws.tree, moveDialog.id, targetId);
       toast.success(targetId ? 'Project moved into the folder.' : 'Project moved to the workspace root.');
@@ -2223,17 +2223,6 @@ onComplete={completeAssistantRepair}
 /* --------------------------------------------------------------------------
    Local tree helpers over the root-node union
    -------------------------------------------------------------------------- */
-
-function findProjectNode(tree: LatexRootNode[], projectId: string) {
-  for (const node of tree) {
-    if (node.kind === 'project' && node.id === projectId) return node;
-    if (node.kind === 'folder') {
-      const hit = node.projects.find((p) => p.id === projectId);
-      if (hit) return hit;
-    }
-  }
-  return null;
-}
 
 function nodeKindAndName(tree: LatexRootNode[], id: string): { kind: 'folder' | 'project' | 'file'; name: string } | null {
   for (const node of tree) {
