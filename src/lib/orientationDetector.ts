@@ -1,5 +1,5 @@
 import { ScanQuad } from './scannerFilters';
-import { detectOrientationWithModel } from './mlOrientation';
+import { detectOrientationWithModel, isReliableOrientation } from './mlOrientation';
 
 export interface DocumentOrientationResult {
   /** The suggested absolute rotation angle (0, 90, 180, 270) */
@@ -1244,9 +1244,6 @@ export function detectDocumentOrientationLocal(
   };
 }
 
-/** Below this the model is unsure and the heuristic engines get a say. */
-const ML_MIN_CONFIDENCE = 0.5;
-
 /**
  * Primary engine: trained on-device classifier (see mlOrientation.ts).
  * Returns null if the model can't load (e.g. very old browser) so the CV
@@ -1261,7 +1258,9 @@ async function detectOrientationViaModel(
     const view =
       currentRotation === 0 ? source : renderRotatedBitmap(source, currentRotation, 1024);
     if (!view) return null;
-    const res = await detectOrientationWithModel(view);
+    const prediction = await detectOrientationWithModel(view);
+    const reliable = isReliableOrientation(prediction);
+    const res = { ...prediction, rotationDelta: reliable ? prediction.rotationDelta : 0 as RightAngle };
     if (view !== source) {
       (view as HTMLCanvasElement).width = 0;
       (view as HTMLCanvasElement).height = 0;
@@ -1286,8 +1285,9 @@ async function detectOrientationViaModel(
       needsRotation: res.rotationDelta !== 0,
       aspectRatio: Math.round((isRot ? origH / origW : origW / origH) * 100) / 100,
       source: 'ml',
-      reason:
-        res.rotationDelta !== 0
+      reason: !reliable
+        ? 'Orientation uncertain — kept the current orientation. Use manual rotation if needed.'
+        : res.rotationDelta !== 0
           ? `On-device model: page was turned; rotated ${res.rotationDelta}° to upright`
           : 'On-device model: page is upright',
     };
@@ -1309,10 +1309,25 @@ export async function detectDocumentOrientation(
   _options?: { forceLocal?: boolean }
 ): Promise<DocumentOrientationResult> {
   const viaModel = await detectOrientationViaModel(source, currentRotation);
-  if (viaModel && viaModel.confidence >= ML_MIN_CONFIDENCE) return viaModel;
+  if (viaModel && viaModel.rotationDelta !== 180) return viaModel;
 
   const local = detectDocumentOrientationLocal(source, currentRotation);
-  return viaModel && viaModel.confidence > local.confidence ? viaModel : local;
+  if (viaModel && local.rotationDelta === 180 && local.confidence >= 0.7) return viaModel;
+
+  // Layout heuristics cannot reliably distinguish upright handwriting, tables or diagrams.
+  // Never let a fallback guess silently change the decoded (EXIF-corrected) orientation.
+  const currentIsSideways = currentRotation === 90 || currentRotation === 270;
+  const width = (source as HTMLImageElement).naturalWidth || source.width || 1;
+  const height = (source as HTMLImageElement).naturalHeight || source.height || 1;
+  return {
+    ...(viaModel ?? local),
+    suggestedRotation: currentRotation,
+    rotationDelta: 0,
+    needsRotation: false,
+    textDirection: 'ambiguous',
+    aspectRatio: currentIsSideways ? height / width : width / height,
+    reason: 'Orientation uncertain — kept the current orientation. Use manual rotation if needed.',
+  };
 }
 
 /**
