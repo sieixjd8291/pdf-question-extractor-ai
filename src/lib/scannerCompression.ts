@@ -2,6 +2,16 @@ export function sampleSizeWeight(weight: number, fullScale: number, sampleScale:
   return weight * (fullScale / sampleScale) ** 2;
 }
 
+export function targetCompressionSettings(level: number, baseQuality: number, png: boolean) {
+  const strength = Math.min(100, Math.max(0, level)) / 100;
+  return {
+    level,
+    quality: png ? 1 : Math.max(0.1, baseQuality * (1 - 0.88 * strength)),
+    scale: 10 ** (-2 * strength),
+    maxEdge: 0,
+  };
+}
+
 export async function findTargetCompression(
   targetBytes: number,
   measure: (level: number) => Promise<number>,
