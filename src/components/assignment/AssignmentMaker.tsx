@@ -7,8 +7,9 @@ import { loadHandwritingEngine, type HandwritingEngine } from '../../lib/handwri
 import { DEFAULT_ADJUST, PAGE_SIZES, PAPER_TEMPLATES, findFont, findStockPaper, inkColor, isNeutralAdjust, samePaper, stockLayout, type ActiveGuide, type ArrangeMode, type Diagram, type TextOffset, type HandwritingFont, type ImageAdjust, type PageLayout, type PaperChoice } from '../../lib/handwriting/catalog';
 import { clearMeasureCache, countMistakes, layoutForPage, registerCustomFont } from '../../lib/handwriting/compose';
 import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, paperForPage, tintDiagram } from '../../lib/handwriting/render';
-import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
+import { effectivePageSeed, lookTransformCss, pageLook, pickRerollSeed, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
+import { runInBackground } from '../../lib/backgroundTask';
 import { detectRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
 import { docOnLines, pageWritesOnLines, templateLineStep } from '../../lib/handwriting/snapLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
@@ -161,10 +162,8 @@ export function AssignmentMaker() {
     setArrangeSel({ page: 0, ids: [] });
   };
   const movedCount = Object.keys(doc.textOffsets).length;
-  const marginBoxFor = (page: number): MarginBox => {
-    const L = layoutForPage(drawn, drawnDoc.overrides, page);
-    return { left: L.marginLeft, top: L.marginTop - L.lineHeight, right: size.width - L.marginRight, bottom: size.height - L.marginBottom };
-  };
+  // Text moves freely anywhere on the sheet, on every page, regardless of its margins or rules.
+  const marginBoxFor = (_page: number): MarginBox => ({ left: 0, top: 0, right: size.width, bottom: size.height });
 
   const lineStepRef = useRef<(page: number) => number | null>(() => null);
   const nudgeRef = useRef({ sel: arrangeSel, mode: arrangeMode, input: pages.input, offsets: drawnDoc.textOffsets, box: marginBoxFor(arrangeSel.page) });
@@ -186,8 +185,7 @@ export function AssignmentMaker() {
       if (!bounds) return;
       e.preventDefault();
       const step = e.shiftKey ? 10 : 2;
-      const lineStep = lineStepRef.current(sel.page);
-      const [dx, dy] = clampDelta(bounds, box, d[0] * step, d[1] * (lineStep ?? step), lineStep);
+      const [dx, dy] = clampDelta(bounds, box, d[0] * step, d[1] * step, null);
       if (dx || dy) moveText(shiftedOffsets(sel.ids, offsets, dx, dy));
     };
     window.addEventListener('keydown', onKey);
@@ -455,7 +453,8 @@ export function AssignmentMaker() {
     const list = scope === 'active' ? [Math.min(activePage, pageCount - 1)] : Array.from({ length: pageCount }, (_, i) => i);
     setExportBusy('Preparing…');
     try {
-      await exportAssignment(pages.input, diagramsWithTint, format, list, (done, total) => setExportBusy(`Page ${done}/${total}`));
+      const input = pages.input;
+      await runInBackground(() => exportAssignment(input, diagramsWithTint, format, list, (done, total) => setExportBusy(`Page ${done}/${total}`)));
       toast.success(format === 'pdf' ? 'PDF downloaded.' : 'Download ready.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Export failed.');
@@ -526,11 +525,17 @@ export function AssignmentMaker() {
     return {
       enabled: true,
       state: pv?.off ? 'off' : pv?.seed !== undefined ? 'locked' : 'auto',
-      onReroll: () => update((d) => ({
-        ...d,
-        settings: { ...d.settings, variation: d.settings.variation === 'off' ? 'natural' : d.settings.variation },
-        pageVariation: { ...d.pageVariation, [page]: { seed: 1 + Math.floor(Math.random() * 4_294_967_294) } },
-      }), false),
+      onReroll: () => update((d) => {
+        const strength = !d.settings.variation || d.settings.variation === 'off' ? 'natural' : d.settings.variation;
+        const lookAt = (i: number) => i < 0 || i >= pageCount ? null
+          : pageLook(strength, d.settings.variationSeed ?? 0, d.pageVariation[i], i, size.width, size.height);
+        const seed = pickRerollSeed(strength, lookAt(page), [lookAt(page - 1), lookAt(page + 1)], page, size.width, size.height);
+        return {
+          ...d,
+          settings: { ...d.settings, variation: strength },
+          pageVariation: { ...d.pageVariation, [page]: { seed } },
+        };
+      }, false),
       onLock: (locked) =>
         setPageVariation(page, locked
           ? pv?.seed !== undefined ? { seed: pv.seed } : s.variationSeed ? { seed: effectivePageSeed(s.variationSeed, undefined, page) } : { off: true }
@@ -661,7 +666,6 @@ export function AssignmentMaker() {
                       layout={layoutForPage(drawn, drawnDoc.overrides, i)}
                       onSelect={(ids) => setArrangeSel({ page: i, ids })}
                       onMove={moveText}
-                  lineStep={lineStepFor(i)}
                     />
                   }
                   hasAdjust={!isNeutralAdjust(doc.pageAdjust[i])}

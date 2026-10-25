@@ -1,3 +1,4 @@
+import { yieldToPaintSafe } from './backgroundTask';
 import { useSyncExternalStore } from 'react';
 
 export type ProgressKind = 'import' | 'export';
@@ -122,7 +123,7 @@ function clamp(v: number, min: number, max: number) {
 
 /** Wait for the browser to paint once before the next block of heavy synchronous work. */
 export function yieldToPaint(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  return yieldToPaintSafe();
 }
 
 export function useProgressSnapshot(store: StagedProgress) {
