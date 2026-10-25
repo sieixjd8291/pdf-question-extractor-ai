@@ -106,7 +106,7 @@ export function LayoutPanel({
   const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   const isTemplate = rulingStatus === 'template';
   const snapDescription = isTemplate
-    ? 'Follow ruled or grid baselines as the layout changes. Turn off for completely free positioning'
+    ? 'Template rules are drawn from your line height, so text always sits on them'
     : !s.snapToLines
       ? 'Detect the ruled lines on the paper photo and write on them'
       : rulingStatus === 'detected'
@@ -118,8 +118,8 @@ export function LayoutPanel({
     <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Live preview</span>}>
       <p className="am-help">Drag any slider to preview margins and line spacing live on the page.</p>
       <Toggle
-        checked={s.snapToLines}
-        onChange={(v) => onSettings({ snapToLines: v })}
+        checked={isTemplate || s.snapToLines}
+        onChange={(v) => !isTemplate && onSettings({ snapToLines: v })}
         label="Write within the lines"
         description={snapDescription}
       />
@@ -146,7 +146,7 @@ export function LayoutPanel({
           {variationOff
             ? 'Every page is drawn flat, with no crop, tilt, colour or light changes.'
             : `One click gives every page a fresh photo look${pageLookCount ? `, including the ${pageLookCount} ${pageLookCount === 1 ? 'page' : 'pages'} set individually` : ''}.`}
-          {s.snapToLines && ' Text follows each page’s own ruling or grid.'}
+          {(isTemplate || s.snapToLines) && ' Text stays on the ruled lines on every page.'}
         </p>
       </div>
       <p className="am-label">Page size</p>

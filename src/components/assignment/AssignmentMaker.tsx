@@ -127,10 +127,7 @@ export function AssignmentMaker() {
     [s, doc.pagePapers, pageImages, photo, rulingForImage],
   );
   const drawnDoc = useMemo(
-    () => docOnLines(doc, rulingForPage, (page) => {
-      const paper = page < 0 ? s.paper : paperForPage(s, doc.pagePapers, page);
-      return paper?.kind === 'template' ? paper.template : null;
-    }),
+    () => docOnLines(doc, rulingForPage, (page) => paperForPage(s, doc.pagePapers, page)?.kind === 'template'),
     [doc, s, rulingForPage],
   );
   const drawn = drawnDoc.settings;
@@ -242,8 +239,32 @@ export function AssignmentMaker() {
     };
   }, [doc.diagrams, color, tinted]);
 
-  const rulingStatus: RulingStatus = !s.paper ? null : s.paper.kind === 'template' ? 'template'
-    : !s.snapToLines || !photo ? null : rulingForImage(photo) ? 'detected' : 'none';
+  const [rulingStatus, setRulingStatus] = useState<RulingStatus>(null);
+  const layoutRef = useRef(s.layout);
+  layoutRef.current = s.layout;
+  const fontSizeRef = useRef(s.fontSize);
+  fontSizeRef.current = s.fontSize;
+  const paperKind = s.paper?.kind ?? null;
+
+  useEffect(() => {
+    if (!paperKind) return setRulingStatus(null);
+    if (paperKind === 'template') return setRulingStatus('template');
+    if (!s.snapToLines || !photo) return setRulingStatus(null);
+    const ruling = detectRuling(photo, size.width, size.height);
+    if (!ruling) return setRulingStatus('none');
+    setRulingStatus('detected');
+    const cur = layoutRef.current;
+    const next = layoutFromRuling(ruling, cur, size.height);
+    const changed =
+      Math.abs((next.angle ?? 0) - (cur.angle ?? 0)) > 0.1 ||
+      (['marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'lineHeight'] as const).some((k) => Math.abs(next[k] - cur[k]) > 0.5);
+    const ratio = fontSizeRef.current / next.lineHeight;
+    const patch: Partial<typeof s> = {};
+    if (changed) patch.layout = next;
+    if (ratio < 0.55 || ratio > 0.85) patch.fontSize = Math.round(next.lineHeight * 0.72);
+    if (Object.keys(patch).length) updateSettings(patch, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.snapToLines, photo, paperKind, size.width, size.height, updateSettings]);
 
   const diagramsWithTint: Diagram[] = useMemo(
     () => doc.diagrams.map((d) => ({ ...d, tintedSrc: tinted[`${d.id}|${color}`] ?? null })),
@@ -292,16 +313,13 @@ export function AssignmentMaker() {
     try {
       const { img } = await loadDownscaled(file, 2600);
       setPhoto(img);
-      const ruling = rulingForImage(img);
-      updateSettings({ paper: { kind: 'photo' }, showGuides: true,
-        ...(ruling && s.snapToLines ? { layout: layoutFromRuling(ruling, s.layout, size.height), fontSize: Math.round(ruling.lineHeight * 0.72) } : {}),
-      }, false);
+      updateSettings({ paper: { kind: 'photo' }, showGuides: true }, false);
       setPaperDialog(false);
       toast.info('Photo added. Use the alignment guides and layout sliders to match its lines.');
     } catch {
       toast.error('That image could not be opened.');
     }
-  }, [updateSettings, toast, rulingForImage, s.snapToLines, s.layout, size.height]);
+  }, [updateSettings, toast]);
 
   const stockId = s.paper?.kind === 'stock' ? s.paper.id : null;
   useEffect(() => {
@@ -350,6 +368,37 @@ export function AssignmentMaker() {
     };
   }, [pageStockKey, pageImages, toast]);
 
+  // With "Write within the lines" on, pages that use a different paper than the
+  // document get their own detected layout, so each page follows its own ruling.
+  const pageRulingDone = useRef(new Map<number, string>());
+  useEffect(() => {
+    if (!s.snapToLines) {
+      pageRulingDone.current.clear();
+      return;
+    }
+    const patches: Record<number, PageLayout> = {};
+    for (const [key, paper] of Object.entries(doc.pagePapers)) {
+      const page = Number(key);
+      if (samePaper(paper, s.paper) || paper.kind === 'template') {
+        pageRulingDone.current.delete(page);
+        continue;
+      }
+      const imgKey = pageImageKey(paper);
+      const img = imgKey ? pageImages[imgKey] : null;
+      if (!imgKey || !img) continue;
+      const stamp = `${imgKey}|${size.width}x${size.height}`;
+      if (pageRulingDone.current.get(page) === stamp) continue;
+      pageRulingDone.current.set(page, stamp);
+      const ruling = detectRuling(img, size.width, size.height);
+      if (!ruling) continue;
+      patches[page] = layoutFromRuling(ruling, layoutForPage(s, doc.overrides, page), size.height);
+    }
+    const pagesToPatch = Object.keys(patches);
+    if (!pagesToPatch.length) return;
+    update((d) => ({ ...d, overrides: { ...d.overrides, ...patches } }), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.snapToLines, s.paper, doc.pagePapers, pageImages, size.width, size.height, update]);
+
   const setPagePaper = useCallback(
     (page: number, paper: PaperChoice | null, layout?: PageLayout) => {
       update((d) => {
@@ -375,14 +424,13 @@ export function AssignmentMaker() {
         const { img } = await loadDownscaled(file, 2600);
         const photoId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         setPageImages((prev) => ({ ...prev, [`photo:${photoId}`]: img }));
-        const ruling = s.snapToLines ? rulingForImage(img) : null;
-        setPagePaper(page, { kind: 'photo', photoId }, ruling ? layoutFromRuling(ruling, layoutForPage(s, doc.overrides, page), size.height) : undefined);
+        setPagePaper(page, { kind: 'photo', photoId });
         toast.info(`Photo set as the paper for page ${page + 1}.`);
       } catch {
         toast.error('That image could not be opened.');
       }
     },
-    [setPagePaper, toast, s, doc.overrides, rulingForImage, size.height],
+    [setPagePaper, toast],
   );
 
   const paperLabel = (paper: PaperChoice | null | undefined) =>
@@ -467,7 +515,10 @@ export function AssignmentMaker() {
 
   /** Line pitch a page's text must move in so it stays on the rules, or null when free. */
   const lineStepFor = (page: number): number | null => {
-    return layoutForPage(drawn, drawnDoc.overrides, page).ruleStep ?? null;
+    const paper = paperForPage(s, doc.pagePapers, page);
+    if (!paper) return null;
+    if (paper.kind !== 'template' && !rulingForPage(page)) return null;
+    return layoutForPage(drawn, drawnDoc.overrides, page).lineHeight;
   };
   lineStepRef.current = lineStepFor;
 
@@ -647,8 +698,7 @@ export function AssignmentMaker() {
                       pageH={size.height}
                       marginBox={marginBoxFor(i)}
                       selection={arrangeSel.page === i ? arrangeSel.ids : []}
-                      offsets={drawnDoc.textOffsets}
-                      angle={layoutForPage(drawn, drawnDoc.overrides, i).angle ?? 0}
+                      offsets={doc.textOffsets}
                       onSelect={(ids) => setArrangeSel({ page: i, ids })}
                       onMove={moveText}
                   lineStep={lineStepFor(i)}

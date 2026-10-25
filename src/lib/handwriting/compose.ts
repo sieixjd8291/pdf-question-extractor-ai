@@ -408,13 +408,6 @@ export function runLayout(
     strokes.push({ page, kind, points: out.slice(p + 3, p + 3 + count * 2) });
     p += 3 + count * 2;
   }
-  for (let i = 0; i < glyphCount; i++) {
-    const o = i * GLYPH_STRIDE;
-    const pageLayout = layoutForPage(s, overrides, glyphs[o]);
-    // Preserve superscripts, subscripts and caret insertions above/below the baseline.
-    if (!pageLayout.onLines || glyphs[o + 5] < 0.75 || (glyphs[o + 9] & GLYPH_FLAG.insert)) continue;
-    glyphs[o + 3] = pageLayout.marginTop + Math.round((glyphs[o + 3] - pageLayout.marginTop) / pageLayout.lineHeight) * pageLayout.lineHeight;
-  }
   const blocks = arrangeText(glyphs, glyphCount, strokes, pages, s, overrides, fontA, useB ? fontB : fontA, wa, wb, offsets);
   return { pages, glyphs, glyphCount, strokes, glyphsByPage, blocks };
 }
