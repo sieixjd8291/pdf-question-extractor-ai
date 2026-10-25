@@ -1,4 +1,9 @@
-import type { AssignmentDoc, PageLayout, TextOffsets } from './catalog';
+import type { AssignmentDoc, PageLayout, PaperChoice, TextOffsets } from './catalog';
+
+export function templateLineStep(paper: PaperChoice | null | undefined, layout: PageLayout): number | null {
+  if (paper?.kind !== 'template' || ![1, 2, 3, 4, 5, 8, 9].includes(paper.template)) return null;
+  return layout.lineHeight / (paper.template === 3 || paper.template === 4 ? 2 : 1);
+}
 import { layoutForPage } from './compose';
 import type { DetectedRuling } from './detectLines';
 
@@ -31,7 +36,7 @@ const pageOfOffset = (id: string) => Number(/^p(\d+)/.exec(id)?.[1]);
 export function docOnLines(
   doc: AssignmentDoc,
   rulingFor: (page: number) => DetectedRuling | null,
-  isTemplatePage: (page: number) => boolean,
+  paperFor: (page: number) => PaperChoice | null,
 ): AssignmentDoc {
   const s = doc.settings;
   let settings = s;
@@ -44,8 +49,12 @@ export function docOnLines(
     const next: Record<number, PageLayout> = { ...doc.overrides };
     for (const page of pages) {
       const ruling = rulingFor(page);
-      if (!ruling) continue;
       const own = doc.overrides[page];
+      if (!ruling) {
+        // A plain or generated page must not inherit another photo's snapped geometry.
+        next[page] = { ...(own ?? s.layout), angle: paperFor(page)?.kind === 'template' ? 0 : (own?.angle ?? 0) };
+        continue;
+      }
       if (!own && ruling === global) continue;
       next[page] = layoutOnLines(ruling, own ?? s.layout);
     }
@@ -53,9 +62,9 @@ export function docOnLines(
   }
 
   const stepFor = (page: number): number | null => {
-    if (isTemplatePage(page)) return layoutForPage(settings, overrides, page).lineHeight;
-    if (!s.snapToLines || !rulingFor(page)) return null;
-    return layoutForPage(settings, overrides, page).lineHeight;
+    if (!s.snapToLines) return null;
+    const layout = layoutForPage(settings, overrides, page);
+    return templateLineStep(paperFor(page), layout) ?? (rulingFor(page) ? layout.lineHeight : null);
   };
 
   let textOffsets: TextOffsets = doc.textOffsets;

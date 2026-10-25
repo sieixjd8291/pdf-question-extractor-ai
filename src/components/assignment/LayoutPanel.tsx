@@ -102,11 +102,11 @@ export function LayoutPanel({
   onRerollAllLooks: () => void;
   onAllNoVariation: (off: boolean) => void;
 }) {
-  const variationOff = (s.variation ?? 'off') === 'off';
+  const variationOff = (s.variation ?? 'off') === 'off' || (!s.variationSeed && !pageLookCount);
   const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   const isTemplate = rulingStatus === 'template';
   const snapDescription = isTemplate
-    ? 'Template rules are drawn from your line height, so text always sits on them'
+    ? 'Ruled and grid templates follow your layout sliders live. Enable to keep moved text on their rows; blank paper stays free'
     : !s.snapToLines
       ? 'Detect the ruled lines on the paper photo and write on them'
       : rulingStatus === 'detected'
@@ -118,8 +118,8 @@ export function LayoutPanel({
     <Section title="Default page layout" defaultOpen={false} badge={<span className="am-badge">Live preview</span>}>
       <p className="am-help">Drag any slider to preview margins and line spacing live on the page.</p>
       <Toggle
-        checked={isTemplate || s.snapToLines}
-        onChange={(v) => !isTemplate && onSettings({ snapToLines: v })}
+        checked={s.snapToLines}
+        onChange={(v) => onSettings({ snapToLines: v })}
         label="Write within the lines"
         description={snapDescription}
       />
@@ -136,7 +136,7 @@ export function LayoutPanel({
             type="button"
             className={`am-chip-btn${variationOff ? ' active' : ''}`}
             aria-pressed={variationOff}
-            onClick={() => onAllNoVariation(!variationOff)}
+            onClick={() => onAllNoVariation(true)}
           >
             <Ban size={13} aria-hidden="true" />
             No variation
@@ -146,7 +146,7 @@ export function LayoutPanel({
           {variationOff
             ? 'Every page is drawn flat, with no crop, tilt, colour or light changes.'
             : `One click gives every page a fresh photo look${pageLookCount ? `, including the ${pageLookCount} ${pageLookCount === 1 ? 'page' : 'pages'} set individually` : ''}.`}
-          {(isTemplate || s.snapToLines) && ' Text stays on the ruled lines on every page.'}
+          {s.snapToLines && ' Text follows each page’s ruled or grid lines.'}
         </p>
       </div>
       <p className="am-label">Page size</p>

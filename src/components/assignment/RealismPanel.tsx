@@ -62,7 +62,7 @@ export function RealismPanel({
             <button
               type="button"
               className="am-pnum-reset"
-              onClick={() => onSettings({ variationSeed: Math.floor(Math.random() * 1_000_000_000) })}
+              onClick={() => onSettings({ variationSeed: 1 + Math.floor(Math.random() * 999_999_999) })}
               title="Give every unlocked page a fresh look"
             >
               <Dices size={11} />Re-roll
@@ -84,8 +84,8 @@ export function RealismPanel({
           ))}
         </div>
         <p className="am-pnum-hint">
-          Each page gets its own crop, tilt, colour, light and grain, so pages look photographed separately. Use the
-          adjust button above a page to re-roll, lock or turn off just that page.
+          Your chosen paper stays unchanged until you click Re-roll. Strength only sets how much the look varies.
+          Re-roll all pages in Default page layout, or just one from its layout or adjust button.
         </p>
       </div>
       <Toggle

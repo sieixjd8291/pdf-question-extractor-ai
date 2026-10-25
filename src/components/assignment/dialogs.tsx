@@ -30,6 +30,7 @@ export function PageLayoutDialog({
   layout,
   isCustom,
   snapped,
+  look,
   onChange,
   onReset,
   onClose,
@@ -39,6 +40,7 @@ export function PageLayoutDialog({
   layout: PageLayout;
   isCustom: boolean;
   snapped?: boolean;
+  look?: PageLookControls;
   onChange: (l: PageLayout) => void;
   onReset: () => void;
   onClose: () => void;
@@ -75,6 +77,7 @@ export function PageLayoutDialog({
               Write within the lines is on — text keeps the tilt of this page&apos;s ruled lines as you adjust.
             </p>
           )}
+          {look && <PageLookSection page={page} look={look} />}
           <LayoutFields
             layout={layout}
             onChange={(patch) => onChange({ ...layout, ...patch })}
@@ -122,7 +125,7 @@ function PageLookSection({ page, look }: { page: number; look: PageLookControls 
         )}
       </div>
       <div className="am-chip-row">
-        <button type="button" className="am-chip-btn" onClick={look.onReroll} disabled={isOff}>
+        <button type="button" className="am-chip-btn" onClick={look.onReroll}>
           <Dices size={13} />Re-roll this page
         </button>
         <button

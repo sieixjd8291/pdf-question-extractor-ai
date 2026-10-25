@@ -349,6 +349,8 @@ function arrangeText(
   });
 }
 
+let lastEngineLayout: { engine: HandwritingEngine; input: Float32Array; output: Float32Array } | null = null;
+
 export function runLayout(
   engine: HandwritingEngine,
   s: AssignmentSettings,
@@ -368,9 +370,9 @@ export function runLayout(
   const L = s.layout;
   const params = [
     size.width, size.height, L.marginLeft, L.marginRight, L.marginTop, L.marginBottom, L.lineHeight,
-    s.fontSize, s.letterSpacing, s.wordSpacing, s.tilt, s.charVariance, s.baselineWobble,
+    s.fontSize, s.letterSpacing, s.wordSpacing, s.tilt, s.charVariance, s.snapToLines ? 0 : s.baselineWobble,
     s.autoMistake ? s.mistakeRate / 100 : 0, CROSS_STYLE_ID[s.crossStyle], ALIGN_ID[s.align], s.seed,
-    s.fontMix, s.paragraphIndent, s.sizeVariance, s.lineSlope, s.inkOpacity, s.inkVariance, s.marginJitter,
+    s.fontMix, s.paragraphIndent, s.sizeVariance, s.snapToLines ? 0 : s.lineSlope, s.inkOpacity, s.inkVariance, s.marginJitter,
     useB ? 1 : 0, wa[n], wb[n], s.headingScale, s.underlineHeadings ? 1 : 0, 300,
     mistakeMask(s.mistakeKinds) || 1, s.mistakeSeed,
   ];
@@ -392,7 +394,12 @@ export function runLayout(
     o += 6;
   }
 
-  const out = engine.layout(input);
+  // Offsets only move existing glyphs. Keep one bounded, immutable geometry result
+  // so dragging never re-runs WASM wrapping or mistake generation.
+  const cached = lastEngineLayout;
+  const sameGeometry = cached?.engine === engine && cached.input.length === input.length && input.every((value, i) => value === cached.input[i]);
+  const out = sameGeometry ? cached.output : engine.layout(input);
+  if (!sameGeometry) lastEngineLayout = { engine, input, output: out };
   const pages = Math.max(1, out[0]);
   const glyphCount = out[1];
   const strokeCount = out[2];
