@@ -84,6 +84,18 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirstNavigation(request));
       return;
     }
+    // Unhashed stylesheets (e.g. the handwriting @font-face sheet) change in place, so a cache-first copy hides newly added faces.
+    if (url.pathname.endsWith('.css') && !/[-.][A-Za-z0-9_]{8,}\.css$/.test(url.pathname)) {
+      event.respondWith(
+        fetch(request)
+          .then((response) => {
+            if (response.ok) caches.open(RUNTIME).then((cache) => cache.put(request, response.clone()));
+            return response;
+          })
+          .catch(async () => (await caches.match(request, { ignoreSearch: true })) || Response.error()),
+      );
+      return;
+    }
     event.respondWith(cacheFirst(request));
     return;
   }
