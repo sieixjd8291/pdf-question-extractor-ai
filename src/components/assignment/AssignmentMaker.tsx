@@ -10,7 +10,7 @@ import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, 
 import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { detectRuling, layoutFromRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
-import { docOnLines } from '../../lib/handwriting/snapLines';
+import { docOnLines, templateLineStep } from '../../lib/handwriting/snapLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
@@ -127,7 +127,7 @@ export function AssignmentMaker() {
     [s, doc.pagePapers, pageImages, photo, rulingForImage],
   );
   const drawnDoc = useMemo(
-    () => docOnLines(doc, rulingForPage, (page) => paperForPage(s, doc.pagePapers, page)?.kind === 'template'),
+    () => docOnLines(doc, rulingForPage, (page) => paperForPage(s, doc.pagePapers, page)),
     [doc, s, rulingForPage],
   );
   const drawn = drawnDoc.settings;
@@ -144,12 +144,16 @@ export function AssignmentMaker() {
   const moveText = useCallback(
     (patch: Record<string, TextOffset>) =>
       update((d) => {
-        const textOffsets = { ...d.textOffsets };
+        let textOffsets = d.textOffsets;
         for (const [id, o] of Object.entries(patch)) {
-          if (Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05) delete textOffsets[id];
+          const remove = Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05;
+          const previous = d.textOffsets[id];
+          if (remove ? !previous : previous?.x === o.x && previous?.y === o.y) continue;
+          if (textOffsets === d.textOffsets) textOffsets = { ...textOffsets };
+          if (remove) delete textOffsets[id];
           else textOffsets[id] = o;
         }
-        return { ...d, textOffsets };
+        return textOffsets === d.textOffsets ? d : { ...d, textOffsets };
       }),
     [update],
   );
@@ -250,7 +254,7 @@ export function AssignmentMaker() {
     if (!paperKind) return setRulingStatus(null);
     if (paperKind === 'template') return setRulingStatus('template');
     if (!s.snapToLines || !photo) return setRulingStatus(null);
-    const ruling = detectRuling(photo, size.width, size.height);
+    const ruling = rulingForImage(photo);
     if (!ruling) return setRulingStatus('none');
     setRulingStatus('detected');
     const cur = layoutRef.current;
@@ -343,9 +347,9 @@ export function AssignmentMaker() {
   }, [updateSettings, s.pageSize]);
 
   const pickTemplate = useCallback((id: number) => {
-    updateSettings({ paper: { kind: 'template', template: id } }, false);
+    update((d) => ({ ...d, settings: { ...d.settings, paper: { kind: 'template', template: id }, layout: { ...d.settings.layout, angle: 0 } } }), false);
     setPaperDialog(false);
-  }, [updateSettings]);
+  }, [update]);
 
   const pageStockKey = Object.values(doc.pagePapers)
     .flatMap((p) => (p.kind === 'stock' ? [p.id] : []))
@@ -389,7 +393,7 @@ export function AssignmentMaker() {
       const stamp = `${imgKey}|${size.width}x${size.height}`;
       if (pageRulingDone.current.get(page) === stamp) continue;
       pageRulingDone.current.set(page, stamp);
-      const ruling = detectRuling(img, size.width, size.height);
+      const ruling = rulingForImage(img);
       if (!ruling) continue;
       patches[page] = layoutFromRuling(ruling, layoutForPage(s, doc.overrides, page), size.height);
     }
@@ -516,9 +520,9 @@ export function AssignmentMaker() {
   /** Line pitch a page's text must move in so it stays on the rules, or null when free. */
   const lineStepFor = (page: number): number | null => {
     const paper = paperForPage(s, doc.pagePapers, page);
-    if (!paper) return null;
-    if (paper.kind !== 'template' && !rulingForPage(page)) return null;
-    return layoutForPage(drawn, drawnDoc.overrides, page).lineHeight;
+    if (!paper || !s.snapToLines) return null;
+    const layout = layoutForPage(drawn, drawnDoc.overrides, page);
+    return templateLineStep(paper, layout) ?? (rulingForPage(page) ? layout.lineHeight : null);
   };
   lineStepRef.current = lineStepFor;
 
@@ -530,7 +534,7 @@ export function AssignmentMaker() {
           settings: {
             ...d.settings,
             variation: (d.settings.variation ?? 'off') === 'off' ? 'natural' : d.settings.variation,
-            variationSeed: Math.floor(Math.random() * 1_000_000_000),
+            variationSeed: 1 + Math.floor(Math.random() * 999_999_999),
           },
           pageVariation: {},
         }),
@@ -539,8 +543,8 @@ export function AssignmentMaker() {
     [update],
   );
   const setAllNoVariation = useCallback(
-    (off: boolean) =>
-      update((d) => ({ ...d, settings: { ...d.settings, variation: off ? 'off' : 'natural' }, pageVariation: {} }), false),
+    () =>
+      update((d) => ({ ...d, settings: { ...d.settings, variationSeed: 0 }, pageVariation: {} }), false),
     [update],
   );
 
@@ -571,11 +575,17 @@ export function AssignmentMaker() {
   const pageLookControls = (page: number): PageLookControls => {
     const pv = doc.pageVariation[page];
     return {
-      enabled: (s.variation ?? 'off') !== 'off',
+      enabled: true,
       state: pv?.off ? 'off' : pv?.seed !== undefined ? 'locked' : 'auto',
-      onReroll: () => setPageVariation(page, { seed: Math.floor(Math.random() * 4_294_967_295) }),
+      onReroll: () => update((d) => ({
+        ...d,
+        settings: { ...d.settings, variation: d.settings.variation === 'off' ? 'natural' : d.settings.variation },
+        pageVariation: { ...d.pageVariation, [page]: { seed: 1 + Math.floor(Math.random() * 4_294_967_294) } },
+      }), false),
       onLock: (locked) =>
-        setPageVariation(page, locked ? { seed: effectivePageSeed(s.variationSeed ?? 0, undefined, page) } : null),
+        setPageVariation(page, locked
+          ? pv?.seed !== undefined ? { seed: pv.seed } : s.variationSeed ? { seed: effectivePageSeed(s.variationSeed, undefined, page) } : { off: true }
+          : null),
       onOff: (off) => setPageVariation(page, off ? { off: true } : null),
       onReset: () => setPageVariation(page, null),
     };
@@ -698,7 +708,8 @@ export function AssignmentMaker() {
                       pageH={size.height}
                       marginBox={marginBoxFor(i)}
                       selection={arrangeSel.page === i ? arrangeSel.ids : []}
-                      offsets={doc.textOffsets}
+                      offsets={drawnDoc.textOffsets}
+                      layout={layoutForPage(drawn, drawnDoc.overrides, i)}
                       onSelect={(ids) => setArrangeSel({ page: i, ids })}
                       onMove={moveText}
                   lineStep={lineStepFor(i)}
@@ -791,7 +802,8 @@ export function AssignmentMaker() {
           page={layoutDialogPage}
           layout={layoutForPage(s, doc.overrides, layoutDialogPage)}
           isCustom={Boolean(doc.overrides[layoutDialogPage])}
-          snapped={rulingForPage(layoutDialogPage) !== null}
+          snapped={lineStepFor(layoutDialogPage) !== null}
+          look={pageLookControls(layoutDialogPage)}
           onChange={(l) => setPageLayout(layoutDialogPage, l)}
           onReset={() => setOverride(layoutDialogPage, null)}
           onClose={() => {

@@ -1,5 +1,5 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { ArrangeMode, PageBlocks, TextBlock, TextOffset, TextOffsets } from '../../lib/handwriting/catalog';
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import type { ArrangeMode, PageBlocks, PageLayout, TextBlock, TextOffset, TextOffsets } from '../../lib/handwriting/catalog';
 
 export interface MarginBox {
   left: number;
@@ -42,11 +42,10 @@ export function clampDelta(bounds: MarginBox, box: MarginBox, dx: number, dy: nu
   const x = Math.min(maxX, Math.max(minX, dx));
   if (!lineStep) return [x, Math.min(maxY, Math.max(minY, dy))];
   // "Write within the lines": vertical moves jump whole ruled lines so text always sits on a rule.
-  let y = Math.round(dy / lineStep) * lineStep;
-  if (y > maxY) y -= lineStep;
-  if (y < minY) y += lineStep;
-  if (y > maxY || y < minY) y = 0;
-  return [x, y];
+  const firstStep = Math.ceil(minY / lineStep);
+  const lastStep = Math.floor(maxY / lineStep);
+  const steps = Math.min(lastStep, Math.max(firstStep, Math.round(dy / lineStep)));
+  return [x, steps * lineStep];
 }
 
 /** Rounds a stored vertical offset onto whole line steps. */
@@ -68,8 +67,10 @@ function lookInverse(el: HTMLElement): { host: HTMLElement; m: DOMMatrix | null 
   const look = el.closest<HTMLElement>('.am-page-look');
   const t = look ? getComputedStyle(look).transform : 'none';
   const host = look?.parentElement ?? el;
-  if (!t || t === 'none') return { host, m: null };
-  const m = new DOMMatrix(t).inverse();
+  const own = getComputedStyle(el).transform;
+  if ((!t || t === 'none') && own === 'none') return { host, m: null };
+  const m = new DOMMatrix(t && t !== 'none' ? t : undefined)
+    .multiply(new DOMMatrix(own !== 'none' ? own : undefined)).inverse();
   m.e = 0;
   m.f = 0;
   return { host, m };
@@ -77,6 +78,7 @@ function lookInverse(el: HTMLElement): { host: HTMLElement; m: DOMMatrix | null 
 
 interface Props {
   mode: ArrangeMode;
+  layout: PageLayout;
   blocks: PageBlocks | undefined;
   pageW: number;
   pageH: number;
@@ -92,6 +94,8 @@ interface Props {
 const MODE_LABEL: Record<ArrangeMode, string> = { line: 'line', word: 'word', page: 'page text' };
 
 export function TextArrangeLayer(p: Props) {
+  const cancelDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelDrag.current?.(), []);
   const list = blocksForMode(p.blocks, p.mode);
   const selected = new Set(p.selection);
 
@@ -124,6 +128,10 @@ export function TextArrangeLayer(p: Props) {
     const startY = e.clientY;
     const base = p.offsets;
     const box = p.marginBox;
+    cancelDrag.current?.();
+    const pointerId = e.pointerId;
+    let previousX = 0;
+    let previousY = 0;
     let moved = false;
     let raf = 0;
     let last: PointerEvent | null = null;
@@ -143,20 +151,35 @@ export function TextArrangeLayer(p: Props) {
       if (!moved && Math.hypot(rawX, rawY) < 3 * k) return;
       moved = true;
       const [dx, dy] = clampDelta(bounds, box, rawX, rawY, lineStep);
+      const x = Math.round(dx * 10);
+      const y = Math.round(dy * 10);
+      if (x === previousX && y === previousY) return;
+      previousX = x;
+      previousY = y;
       p.onMove(shiftedOffsets(ids, base, dx, dy));
     };
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       last = ev;
       if (!raf) raf = requestAnimationFrame(apply);
     };
-    const up = () => {
+    const cleanup = () => {
       if (raf) cancelAnimationFrame(raf);
-      apply();
+      raf = 0;
+      cancelDrag.current = null;
       document.body.classList.remove('am-arranging');
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
     };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      if (raf) cancelAnimationFrame(raf);
+      if (ev.type === 'pointerup') last = ev;
+      apply();
+      cleanup();
+    };
+    cancelDrag.current = cleanup;
     document.body.classList.add('am-arranging');
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -167,7 +190,9 @@ export function TextArrangeLayer(p: Props) {
   const pad = 4;
 
   return (
-    <div className="am-arrange" data-mode={p.mode} role="group" aria-label={`Movable text by ${MODE_LABEL[p.mode]}. Drag to move, Shift+click to group, arrow keys to nudge.`}>
+    <div className="am-arrange" data-mode={p.mode}
+      style={{ transform: `rotate(${p.layout.angle ?? 0}deg)`, transformOrigin: `${pct(p.layout.marginLeft, p.pageW)} ${pct(p.layout.marginTop, p.pageH)}` }}
+      role="group" aria-label={`Movable text by ${MODE_LABEL[p.mode]}. Drag to move, Shift+click to group, arrow keys to nudge.`}>
       {list.map((b) => {
         const isSel = selected.has(b.id);
         return (

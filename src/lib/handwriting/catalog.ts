@@ -376,7 +376,7 @@ export const DEFAULT_SETTINGS: AssignmentSettings = {
   photoStrength: 0.6,
   adjust: DEFAULT_ADJUST,
   variation: 'natural',
-  variationSeed: 2024,
+  variationSeed: 0,
   seed: 1337,
   exportScale: 2,
   exportQuality: 0.92,

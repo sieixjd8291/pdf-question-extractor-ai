@@ -57,6 +57,8 @@ function loadDraft(): AssignmentDoc {
       layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout },
       adjust: { ...DEFAULT_ADJUST, ...saved.settings?.adjust },
     };
+    // 2024 was the former automatic seed, not a user-requested reroll.
+    if (settings.variationSeed === 2024) settings.variationSeed = 0;
     // Photos are not persisted, so a photo paper cannot be restored.
     if (settings.paper?.kind === 'photo') settings.paper = null;
     return {

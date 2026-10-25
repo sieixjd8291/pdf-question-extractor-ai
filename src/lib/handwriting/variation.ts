@@ -83,7 +83,7 @@ export function pageLook(
   pageH: number,
 ): PageLook | null {
   const k = STRENGTH_K[strength ?? 'off'] ?? 0;
-  if (k === 0 || pv?.off) return null;
+  if (k === 0 || pv?.off || (!variationSeed && pv?.seed === undefined)) return null;
   const seed = effectivePageSeed(variationSeed, pv, page);
   const r = mulberry32(seed);
   const signed = () => r() * 2 - 1;
