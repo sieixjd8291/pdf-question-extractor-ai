@@ -534,8 +534,10 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
       ctx.lineWidth = Math.max(strokeW * 2.6, s.fontSize * 0.035 * scale);
       ctx.strokeText(unit, 0, 0);
       ctx.fillText(unit, s.fontSize * 0.012 * scale, -s.fontSize * 0.008 * scale);
-    } else if (strokeW > 0.15) {
-      ctx.lineWidth = strokeW;
+    } else {
+      const w = strokeW + (f.weight ?? 0) * px;
+      if (w <= 0.15) continue;
+      ctx.lineWidth = w;
       ctx.strokeText(unit, 0, 0);
     }
   }
