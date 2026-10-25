@@ -101,6 +101,19 @@ export interface MlOrientationResult {
   scores: Record<RightAngle, number>;
 }
 
+export function isReliableOrientation(result: MlOrientationResult): boolean {
+  const values = Object.values(result.scores);
+  if (values.length !== 4 || values.some(value => !Number.isFinite(value) || value < 0 || value > 1) ||
+      !Number.isFinite(result.confidence)) return false;
+  const winner = result.scores[result.rotationDelta];
+  const runnerUp = Math.max(...Object.entries(result.scores)
+    .filter(([angle]) => Number(angle) !== result.rotationDelta)
+    .map(([, score]) => score));
+  // An unnecessary half-turn destroys an already readable page; require stronger evidence.
+  const minimum = result.rotationDelta === 180 ? 0.99 : 0.95;
+  return result.confidence >= minimum && winner >= minimum && winner - runnerUp >= 0.8;
+}
+
 /**
  * Classifies the page as displayed. Test-time augmentation: the page is
  * scored at all four right-angle turns in one batch and the predictions are
