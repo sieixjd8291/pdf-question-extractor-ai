@@ -312,7 +312,7 @@ function RenameDialog({ initial, onDone, onClose }: {
             value={value}
             autoFocus
             onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+            onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
           />
         </label>
         <footer>
@@ -2668,14 +2668,6 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
             aria-label="Document name"
             placeholder="Document name"
           />
-          <button
-            className={`icon-button bordered scanner-rename-btn${eraseMode || cropMode ? ' scanner-rename-btn-compact' : ''}`}
-            onClick={() => setRenameOpen(true)}
-            aria-label="Rename document"
-            title="Rename document"
-          >
-            <Pencil size={15} />
-          </button>
           <div className="scanner-export-wrap">
             <button
               className="btn primary btn-sm"
@@ -2710,6 +2702,15 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
               </>
             )}
           </div>
+          <button
+            className="icon-button bordered scanner-rename-btn scanner-rename-btn-compact"
+            onClick={() => setRenameOpen(true)}
+            aria-label="Rename document"
+            title="Rename document"
+            disabled={!!busy}
+          >
+            <Pencil size={15} />
+          </button>
         </div>
         {!eraseMode && !cropMode ? (
           <div className="field-group">
