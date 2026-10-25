@@ -1,5 +1,10 @@
 import type { AssignmentDoc, PageLayout, PaperChoice, TextOffsets } from './catalog';
 
+export function pageWritesOnLines(doc: AssignmentDoc, page: number, paper: PaperChoice | null | undefined): boolean {
+  return doc.pageSnapToLines?.[page]
+    ?? (paper?.kind === 'template' && (paper.template === 3 || paper.template === 4) ? true : doc.settings.snapToLines);
+}
+
 export function templateLineStep(paper: PaperChoice | null | undefined, layout: PageLayout): number | null {
   if (paper?.kind !== 'template' || ![1, 2, 3, 4, 5, 8, 9].includes(paper.template)) return null;
   return layout.lineHeight / (paper.template === 3 || paper.template === 4 ? 2 : 1);
@@ -46,28 +51,32 @@ export function docOnLines(
   let settings = s;
   let overrides = doc.overrides;
 
-  if (s.snapToLines) {
-    const minimumBaseline = Math.ceil(s.fontSize * Math.max(1, s.headingScale));
-    const global = rulingFor(-1);
-    if (global) settings = { ...s, layout: layoutOnLines(global, s.layout, minimumBaseline) };
-    const pages = new Set([...Object.keys(doc.overrides), ...Object.keys(doc.pagePapers)].map(Number));
-    const next: Record<number, PageLayout> = { ...doc.overrides };
-    for (const page of pages) {
-      const ruling = rulingFor(page);
-      const own = doc.overrides[page];
-      if (!ruling) {
-        // A plain or generated page must not inherit another photo's snapped geometry.
-        next[page] = { ...(own ?? s.layout), angle: paperFor(page)?.kind === 'template' ? 0 : (own?.angle ?? 0) };
-        continue;
-      }
-      if (!own && ruling === global) continue;
-      next[page] = layoutOnLines(ruling, own ?? s.layout, minimumBaseline);
-    }
-    overrides = next;
+  const minimumBaseline = Math.ceil(s.fontSize * Math.max(1, s.headingScale));
+  const globalEnabled = pageWritesOnLines(doc, -1, s.paper);
+  const global = globalEnabled ? rulingFor(-1) : null;
+  if (global || globalEnabled !== s.snapToLines) {
+    settings = { ...s, snapToLines: globalEnabled, layout: global ? layoutOnLines(global, s.layout, minimumBaseline) : s.layout };
+  }
+  const pages = new Set([
+    ...Object.keys(doc.overrides), ...Object.keys(doc.pagePapers), ...Object.keys(doc.pageSnapToLines ?? {}),
+  ].map(Number));
+  for (const page of pages) {
+    const paper = paperFor(page);
+    const enabled = pageWritesOnLines(doc, page, paper);
+    const ruling = enabled ? rulingFor(page) : null;
+    const own = doc.overrides[page];
+    if (!own && enabled === globalEnabled && ruling === global) continue;
+    if (overrides === doc.overrides) overrides = { ...doc.overrides };
+    const desired = own ?? s.layout;
+    overrides[page] = {
+      ...(ruling ? layoutOnLines(ruling, desired, minimumBaseline) : desired),
+      ...(!ruling && paper?.kind === 'template' ? { angle: 0 } : {}),
+      snapToLines: enabled,
+    };
   }
 
   const stepFor = (page: number): number | null => {
-    if (!s.snapToLines) return null;
+    if (!pageWritesOnLines(doc, page, paperFor(page))) return null;
     const layout = layoutForPage(settings, overrides, page);
     return templateLineStep(paperFor(page), layout) ?? (rulingFor(page) ? layout.lineHeight : null);
   };

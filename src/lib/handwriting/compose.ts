@@ -349,7 +349,16 @@ function arrangeText(
   });
 }
 
-let lastEngineLayout: { engine: HandwritingEngine; input: Float32Array; output: Float32Array } | null = null;
+const engineLayouts: Array<{ engine: HandwritingEngine; input: Float32Array; output: Float32Array }> = [];
+
+function cachedEngineLayout(engine: HandwritingEngine, input: Float32Array): Float32Array {
+  const cached = engineLayouts.find((entry) => entry.engine === engine && entry.input.length === input.length && input.every((value, i) => value === entry.input[i]));
+  if (cached) return cached.output;
+  const output = engine.layout(input);
+  engineLayouts.push({ engine, input, output });
+  if (engineLayouts.length > 2) engineLayouts.shift();
+  return output;
+}
 
 export function runLayout(
   engine: HandwritingEngine,
@@ -394,16 +403,28 @@ export function runLayout(
     o += 6;
   }
 
-  // Offsets only move existing glyphs. Keep one bounded, immutable geometry result
-  // so dragging never re-runs WASM wrapping or mistake generation.
-  const cached = lastEngineLayout;
-  const sameGeometry = cached?.engine === engine && cached.input.length === input.length && input.every((value, i) => value === cached.input[i]);
-  const out = sameGeometry ? cached.output : engine.layout(input);
-  if (!sameGeometry) lastEngineLayout = { engine, input, output: out };
+  // Baseline wobble and slope affect emission only, not wrapping or RNG consumption.
+  // Cache both modes for mixed documents so toggling one page cannot change another.
+  const out = cachedEngineLayout(engine, input);
+  let alternate: Float32Array | null = null;
+  if ((s.baselineWobble || s.lineSlope) && ov.some(([, l]) => l.snapToLines !== undefined && l.snapToLines !== s.snapToLines)) {
+    const alternateInput = input.slice();
+    alternateInput[12] = s.snapToLines ? s.baselineWobble : 0;
+    alternateInput[20] = s.snapToLines ? s.lineSlope : 0;
+    alternate = cachedEngineLayout(engine, alternateInput);
+  }
+  const outputForPage = (page: number) => alternate && (overrides[page]?.snapToLines ?? s.snapToLines) !== s.snapToLines ? alternate : out;
   const pages = Math.max(1, out[0]);
   const glyphCount = out[1];
   const strokeCount = out[2];
   const glyphs = out.slice(3, 3 + glyphCount * GLYPH_STRIDE);
+  if (alternate) {
+    for (let i = 0; i < glyphCount; i++) {
+      const start = i * GLYPH_STRIDE;
+      const source = outputForPage(glyphs[start]);
+      if (source !== out) glyphs.set(source.subarray(3 + start, 3 + start + GLYPH_STRIDE), start);
+    }
+  }
   const glyphsByPage: number[][] = Array.from({ length: pages }, () => []);
   for (let i = 0; i < glyphCount; i++) glyphsByPage[glyphs[i * GLYPH_STRIDE]]?.push(i);
   const strokes: LayoutResult['strokes'] = [];
@@ -412,7 +433,7 @@ export function runLayout(
     const page = out[p];
     const kind = out[p + 1];
     const count = out[p + 2];
-    strokes.push({ page, kind, points: out.slice(p + 3, p + 3 + count * 2) });
+    strokes.push({ page, kind, points: outputForPage(page).slice(p + 3, p + 3 + count * 2) });
     p += 3 + count * 2;
   }
   const blocks = arrangeText(glyphs, glyphCount, strokes, pages, s, overrides, fontA, useB ? fontB : fontA, wa, wb, offsets);

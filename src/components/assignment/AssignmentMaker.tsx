@@ -10,7 +10,7 @@ import { computePageNumberPlacement, formatPageNumber, loadImage, pageImageKey, 
 import { effectivePageSeed, lookTransformCss, pageLook, type PageVariation } from '../../lib/handwriting/variation';
 import { exportAssignment, type ExportFormat } from '../../lib/handwriting/export';
 import { detectRuling, layoutFromRuling, type DetectedRuling } from '../../lib/handwriting/detectLines';
-import { docOnLines, templateLineStep } from '../../lib/handwriting/snapLines';
+import { docOnLines, pageWritesOnLines, templateLineStep } from '../../lib/handwriting/snapLines';
 import { useAssignmentDoc } from './useAssignmentDoc';
 import type { RulingStatus } from './LayoutPanel';
 import { useHandwritingPages } from './useHandwritingPages';
@@ -113,7 +113,6 @@ export function AssignmentMaker() {
   /** Ruling of a page's own paper; page -1 means the document paper. */
   const rulingForPage = useCallback(
     (page: number): DetectedRuling | null => {
-      if (!s.snapToLines) return null;
       const paper = page < 0 ? s.paper : paperForPage(s, doc.pagePapers, page);
       if (!paper || paper.kind === 'template') return null;
       const own = page < 0 ? undefined : doc.pagePapers[page];
@@ -376,10 +375,6 @@ export function AssignmentMaker() {
   // document get their own detected layout, so each page follows its own ruling.
   const pageRulingDone = useRef(new Map<number, string>());
   useEffect(() => {
-    if (!s.snapToLines) {
-      pageRulingDone.current.clear();
-      return;
-    }
     const patches: Record<number, PageLayout> = {};
     for (const [key, paper] of Object.entries(doc.pagePapers)) {
       const page = Number(key);
@@ -387,6 +382,7 @@ export function AssignmentMaker() {
         pageRulingDone.current.delete(page);
         continue;
       }
+      if (!pageWritesOnLines(doc, page, paper)) continue;
       const imgKey = pageImageKey(paper);
       const img = imgKey ? pageImages[imgKey] : null;
       if (!imgKey || !img) continue;
@@ -499,7 +495,7 @@ export function AssignmentMaker() {
     update((d) => ({ ...d, diagrams: d.diagrams.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
 
   const onText = useCallback((t: string, coalesce = true) => update((d) => ({ ...d, text: t }), coalesce), [update]);
-  const clearOverrides = useCallback(() => update((d) => ({ ...d, overrides: {} }), false), [update]);
+  const clearOverrides = useCallback(() => update((d) => ({ ...d, overrides: {}, pageSnapToLines: {} }), false), [update]);
 
   const runExport = async (format: ExportFormat, scope: 'all' | 'active') => {
     if (!pages.input) return;
@@ -520,7 +516,7 @@ export function AssignmentMaker() {
   /** Line pitch a page's text must move in so it stays on the rules, or null when free. */
   const lineStepFor = (page: number): number | null => {
     const paper = paperForPage(s, doc.pagePapers, page);
-    if (!paper || !s.snapToLines) return null;
+    if (!paper || !pageWritesOnLines(doc, page, paper)) return null;
     const layout = layoutForPage(drawn, drawnDoc.overrides, page);
     return templateLineStep(paper, layout) ?? (rulingForPage(page) ? layout.lineHeight : null);
   };
@@ -761,7 +757,7 @@ export function AssignmentMaker() {
           <StylePanelM settings={s} onSettings={updateSettings} />
           <LayoutPanelM
             settings={s}
-            overrideCount={Object.keys(doc.overrides).length}
+            overrideCount={new Set([...Object.keys(doc.overrides), ...Object.keys(doc.pageSnapToLines ?? {})]).size}
             rulingStatus={rulingStatus}
 firstBaseline={drawn.layout.marginTop}
             onSettings={updateSettings}
@@ -804,11 +800,19 @@ firstBaseline={drawn.layout.marginTop}
           layout={layoutForPage(s, doc.overrides, layoutDialogPage)}
 pageSize={s.pageSize}
 firstBaseline={layoutForPage(drawn, drawnDoc.overrides, layoutDialogPage).marginTop}
-isCustom={Boolean(doc.overrides[layoutDialogPage])}
+isCustom={Boolean(doc.overrides[layoutDialogPage]) || doc.pageSnapToLines?.[layoutDialogPage] !== undefined}
           snapped={lineStepFor(layoutDialogPage) !== null}
+          writeWithinLines={pageWritesOnLines(doc, layoutDialogPage, paperForPage(s, doc.pagePapers, layoutDialogPage))}
+          onWriteWithinLines={(enabled) => update((d) => ({ ...d, pageSnapToLines: { ...d.pageSnapToLines, [layoutDialogPage]: enabled } }), false)}
           look={pageLookControls(layoutDialogPage)}
           onChange={(l) => setPageLayout(layoutDialogPage, l)}
-          onReset={() => setOverride(layoutDialogPage, null)}
+          onReset={() => update((d) => {
+            const overrides = { ...d.overrides };
+            const pageSnapToLines = { ...d.pageSnapToLines };
+            delete overrides[layoutDialogPage];
+            delete pageSnapToLines[layoutDialogPage];
+            return { ...d, overrides, pageSnapToLines };
+          }, false)}
           onClose={() => {
             setActiveGuide(null);
             setLayoutDialogPage(null);

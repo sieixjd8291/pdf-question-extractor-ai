@@ -115,7 +115,7 @@ export function LayoutPanel({
   const setLayout = (patch: Partial<PageLayout>) => onSettings({ layout: { ...s.layout, ...patch } });
   const isTemplate = rulingStatus === 'template';
   const snapDescription = isTemplate
-    ? 'Ruled and grid templates follow your layout sliders live. Enable to keep moved text on their rows; blank paper stays free'
+    ? 'Grid pages align automatically by default. Set each page’s Write within the lines toggle in its layout settings; blank paper stays free'
     : !s.snapToLines
       ? 'Detect the ruled lines on the paper photo and write on them'
       : rulingStatus === 'detected'

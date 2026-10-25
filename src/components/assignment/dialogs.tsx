@@ -5,6 +5,7 @@ import { isNeutralAdjust, type ActiveGuide, type ImageAdjust, type PageLayout, t
 import type { ExportFormat } from '../../lib/handwriting/export';
 import { LayoutFields } from './LayoutPanel';
 import { AdjustFields } from './AdjustFields';
+import { Toggle } from './controls';
 
 function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useDialog(onClose);
@@ -32,6 +33,8 @@ export function PageLayoutDialog({
   firstBaseline,
   isCustom,
   snapped,
+  writeWithinLines,
+  onWriteWithinLines,
   look,
   onChange,
   onReset,
@@ -44,6 +47,8 @@ export function PageLayoutDialog({
   firstBaseline?: number;
   isCustom: boolean;
   snapped?: boolean;
+  writeWithinLines: boolean;
+  onWriteWithinLines: (enabled: boolean) => void;
   look?: PageLookControls;
   onChange: (l: PageLayout) => void;
   onReset: () => void;
@@ -76,11 +81,16 @@ export function PageLayoutDialog({
           <p className="am-help">
             Changes apply only to page {page + 1}. Drag any slider to see the live preview on the page.
           </p>
-          {snapped && (
-            <p className="am-help">
-              Write within the lines is on — text keeps the tilt of this page&apos;s ruled lines as you adjust.
-            </p>
-          )}
+          <Toggle
+            checked={writeWithinLines}
+            onChange={onWriteWithinLines}
+            label="Write within the lines"
+            description={!writeWithinLines
+              ? 'Off for this page — move text freely without snapping to rows.'
+              : snapped
+                ? 'Text follows this page’s ruled or grid lines automatically. Other pages are unchanged.'
+                : 'On for this page. Alignment starts automatically when ruled or grid lines are available; blank paper stays free.'}
+          />
           {look && <PageLookSection page={page} look={look} />}
           <LayoutFields
             layout={layout}

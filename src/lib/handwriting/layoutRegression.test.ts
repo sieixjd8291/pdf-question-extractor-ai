@@ -7,7 +7,7 @@ import { LayoutFields } from '../../components/assignment/LayoutPanel';
 import { pageSignature, type RenderInput } from './render';
 import { runLayout, segment } from './compose';
 import type { HandwritingEngine } from './engine';
-import { docOnLines, templateLineStep } from './snapLines';
+import { docOnLines, pageWritesOnLines, templateLineStep } from './snapLines';
 import { pageLook } from './variation';
 import { clampDelta, shiftedOffsets } from '../../components/assignment/TextArrangeLayer';
 
@@ -76,6 +76,38 @@ test('first-line slider can reach the photo top instead of clamping to its first
       assert.equal(actual.marginBottom, desired.marginBottom);
       assert.equal((customized ? doc.overrides[0] : doc.settings.layout).marginTop, top);
     }
+  }
+});
+
+test('individual snapping overrides the global mode without changing other pages or saved positions', () => {
+  for (const globalEnabled of [true, false]) {
+    const doc = document();
+    doc.settings = { ...doc.settings, snapToLines: globalEnabled };
+    doc.pageSnapToLines = { 0: !globalEnabled };
+    doc.textOffsets = { 'p0.l0': { x: 5, y: 17 }, 'p1.l0': { x: 9, y: 17 } };
+    const before = structuredClone(doc);
+    const drawn = docOnLines(doc, () => ruling, () => doc.settings.paper);
+    assert.deepEqual(doc, before);
+    assert.equal(drawn.overrides[0].snapToLines, !globalEnabled);
+    assert.equal(drawn.overrides[0].lineHeight, globalEnabled ? layout.lineHeight : ruling.lineHeight);
+    assert.equal(drawn.textOffsets['p0.l0'].y, globalEnabled ? 17 : 0);
+    assert.equal(drawn.textOffsets['p1.l0'].y, globalEnabled ? 0 : 17);
+    assert.equal(drawn.settings.snapToLines, globalEnabled);
+  }
+});
+
+test('grid pages enable alignment automatically but retain an explicit opt-out', () => {
+  for (const template of [3, 4]) {
+    const doc = document();
+    doc.settings = { ...doc.settings, snapToLines: false };
+    doc.pagePapers[1] = { kind: 'template', template };
+    doc.textOffsets = { 'p1.l0': { x: 10, y: 17 } };
+    const paperFor = (page: number) => doc.pagePapers[page] ?? doc.settings.paper;
+    assert.equal(pageWritesOnLines(doc, 1, paperFor(1)), true);
+    assert.equal(docOnLines(doc, () => null, paperFor).textOffsets['p1.l0'].y, 26);
+    doc.pageSnapToLines = { 1: false };
+    assert.equal(pageWritesOnLines(doc, 1, paperFor(1)), false);
+    assert.equal(docOnLines(doc, () => null, paperFor).textOffsets['p1.l0'].y, 17);
   }
 });
 
@@ -160,6 +192,39 @@ test('drag offsets reuse engine geometry; layout edits invalidate it', () => {
     assert.equal(base.glyphs[2], 150);
     runLayout(engine, { ...DEFAULT_SETTINGS, layout: { ...layout, marginLeft: 180 } }, text, font, font, {});
     assert.equal(calls, 2);
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+});
+
+test('mixed snapping modes affect only the selected page and reuse both cached engine results', () => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 40 }) }) }) } });
+  try {
+    for (const globalEnabled of [true, false]) {
+      let calls = 0;
+      const engine = { layout: (input: Float32Array) => {
+        calls++;
+        const y = input[12] ? 183 : 176;
+        return new Float32Array([2, 2, 2,
+          0, 0, 150, y, 0, 1, 0, 0, 1, 0,
+          1, 0, 150, y, 0, 1, 0, 0, 1, 0,
+          0, 4, 2, 150, y + 8, 170, y + 8,
+          1, 4, 2, 150, y + 8, 170, y + 8]);
+      } } as unknown as HandwritingEngine;
+      const font = findFont(DEFAULT_SETTINGS.fontFamily);
+      const settings = { ...DEFAULT_SETTINGS, snapToLines: globalEnabled };
+      const overrides = { 0: { ...layout, snapToLines: !globalEnabled } };
+      const text = segment('a\fb');
+      const result = runLayout(engine, settings, text, font, font, overrides);
+      assert.equal(result.glyphs[3], globalEnabled ? 183 : 176);
+      assert.equal(result.glyphs[13], globalEnabled ? 176 : 183);
+      assert.equal(result.strokes[0].points[1], globalEnabled ? 191 : 184);
+      assert.equal(result.strokes[1].points[1], globalEnabled ? 184 : 191);
+      runLayout(engine, settings, text, font, font, overrides, { p0: { x: 10, y: 0 } });
+      assert.equal(calls, 2);
+    }
   } finally {
     if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
     else Reflect.deleteProperty(globalThis, 'document');

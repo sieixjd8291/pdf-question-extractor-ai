@@ -201,6 +201,8 @@ export interface PageLayout {
   lineHeight: number;
   /** Slant of the printed ruling in degrees (positive = lines descend to the right); text follows it. */
   angle?: number;
+  /** Effective per-page alignment, derived for the layout engine. */
+  snapToLines?: boolean;
 }
 
 /** `photoId` identifies a per-page uploaded photo; without it, `photo` is the document-wide upload. */
@@ -402,6 +404,8 @@ export interface AssignmentDoc {
   overrides: Record<number, PageLayout>;
   /** Paper chosen for an individual page; pages without an entry use `settings.paper`. */
   pagePapers: Record<number, PaperChoice>;
+  /** Explicit line-alignment choices; missing pages use the automatic paper default. */
+  pageSnapToLines?: Record<number, boolean>;
   /** Extra image adjustments for an individual page, stacked on `settings.adjust`. */
   pageAdjust: Record<number, ImageAdjust>;
   /** Per-page variation overrides (locked/re-rolled seed or turned off). */
