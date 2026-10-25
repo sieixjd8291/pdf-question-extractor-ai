@@ -90,29 +90,3 @@ export function applyApplicableLatexEdits(source: string, edits: LatexRepair['ed
   if (!result.trim() || result.length > 500000) return { source, applied: [], skipped: edits.length };
   return { source: result, applied: accepted.map(item => item.edit), skipped: edits.length - accepted.length };
 }
-
-export function applyLatexEdits(source: string, edits: LatexRepair['edits']): string {
-  const ranges = edits.map(edit => {
-    const start = source.indexOf(edit.before);
-    if (!edit.before || start < 0 || source.indexOf(edit.before, start + 1) !== -1) {
-      throw new Error('A suggested change does not uniquely match the source. Analyze again.');
-    }
-    if (edit.before === edit.after) throw new Error('The assistant returned an unchanged replacement.');
-    return { start, end: start + edit.before.length, edit };
-  }).sort((a, b) => a.start - b.start);
-  for (let i = 1; i < ranges.length; i++) {
-    if (ranges[i].start < ranges[i - 1].end) throw new Error('Suggested changes overlap. Analyze again.');
-  }
-  const dangerousCommands = /\\(?:(?:write18|openout|read|catcode|directlua|special)\b|(?:input|include)\s*(?:\{\s*)?["']?\|)/g;
-  for (const { edit } of ranges) {
-    if ((edit.after.match(dangerousCommands)?.length ?? 0) > (edit.before.match(dangerousCommands)?.length ?? 0)) {
-      throw new Error('The assistant suggested an unsafe TeX command. No changes were applied.');
-    }
-  }
-  let result = source;
-  for (const { start, end, edit } of ranges.reverse()) {
-    result = result.slice(0, start) + edit.after + result.slice(end);
-  }
-  if (!result.trim() || result.length > 500000) throw new Error('The suggested repair has an invalid document size.');
-  return result;
-}

@@ -77,7 +77,6 @@ export function detectDocumentCached(url:string,rotation:Rotation):Promise<Docum
 export function warmDocumentDetection(){try{if(typeof Worker!=='undefined')getWorker();}catch{/* detection falls back on demand */}}
 export function releaseDocumentDetection(url:string){for(const [key,value]of cache)if(value.source===url)cache.delete(key);}
 export function clearDocumentDetections(){epoch++;cache.clear();stopWorker();queue=Promise.resolve();}
-export function detectionCacheSize(){return cache.size;}
 
 export type DetectionSnapEngine=EdgeSnapEngine&{detection:DocumentDetectionResult};
 export function createBoundarySnapEngine(detection:DocumentDetectionResult):DetectionSnapEngine {

@@ -48,11 +48,6 @@ export function clampDelta(bounds: MarginBox, box: MarginBox, dx: number, dy: nu
   return [x, steps * lineStep];
 }
 
-/** Rounds a stored vertical offset onto whole line steps. */
-export function snapOffsetY(y: number, lineStep: number): number {
-  return Math.round(Math.round(y / lineStep) * lineStep * 10) / 10;
-}
-
 export function shiftedOffsets(ids: string[], base: TextOffsets, dx: number, dy: number): Record<string, TextOffset> {
   const patch: Record<string, TextOffset> = {};
   for (const id of ids) {
