@@ -625,6 +625,143 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
   return { rows };
 }
 
+/** One character located by the AI; box is [x0, y0, x1, y1] as fractions of the image. */
+export interface AiChar { c: string; box: [number, number, number, number]; sure?: boolean }
+export interface AiLine { text: string; chars: AiChar[] }
+
+/** Word number of each AI char, taken from the line text so sentences keep their spaces. */
+function wordIndexes(line: AiLine): number[] {
+  const words = line.text.split(/\s+/).filter(Boolean);
+  const flat = words.join('');
+  const chars = line.chars.map((ch) => ch.c).join('');
+  if (Array.from(flat).length !== line.chars.length || flat !== chars) {
+    // Box list and text disagree: fall back to gaps wider than the typical letter gap.
+    const out: number[] = [];
+    const gaps = line.chars.slice(1).map((ch, i) => ch.box[0] - line.chars[i].box[2]);
+    const typical = [...gaps].sort((a, b) => a - b)[gaps.length >> 1] ?? 0;
+    const width = median(line.chars.map((ch) => ch.box[2] - ch.box[0]));
+    let w = 0;
+    line.chars.forEach((_, i) => {
+      if (i > 0 && gaps[i - 1] > Math.max(typical * 2.5, width * 0.45)) w++;
+      out.push(w);
+    });
+    return out;
+  }
+  const out: number[] = [];
+  words.forEach((word, wi) => Array.from(word).forEach(() => out.push(wi)));
+  return out;
+}
+
+/**
+ * Cuts out one glyph per AI-located character. The AI boxes only say roughly
+ * where each character is; the real glyph is the ink inside: each connected
+ * stroke goes to the box it overlaps most, and strokes shared by neighbouring
+ * boxes (joined letters) are sliced at the gap between those boxes.
+ */
+export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
+  const { width: W, height: H, labels, components } = ink;
+  const lines = aiLines
+    .map((l) => {
+      const word = wordIndexes(l);
+      return {
+      chars: l.chars
+        .map((ch, i) => {
+          const [a, b, c, d] = ch.box;
+          return {
+            c: ch.c, word: word[i] ?? 0, sure: ch.sure !== false,
+            x0: Math.floor(a * W), y0: Math.floor(b * H), x1: Math.ceil(c * W), y1: Math.ceil(d * H),
+          };
+        })
+        .filter((ch) => ch.x1 > ch.x0 && ch.y1 > ch.y0 && !/\s/.test(ch.c))
+        .sort((p, q) => p.x0 + p.x1 - (q.x0 + q.x1)),
+      };
+    })
+    .filter((l) => l.chars.length);
+  if (!lines.length) return { rows: [], error: 'AI did not locate any characters.' };
+
+  // Per-line column cuts halfway through the gap (or overlap) between neighbours.
+  const cuts = lines.map((l) => l.chars.slice(1).map((ch, i) => Math.round((l.chars[i].x1 + ch.x0) / 2)));
+  const widths = lines.flatMap((l) => l.chars.map((ch) => ch.x1 - ch.x0)).sort((a, b) => a - b);
+  const medianW = widths[widths.length >> 1] || 1;
+  const parts: PiecePart[][][] = lines.map((l) => l.chars.map(() => []));
+
+  components.forEach((comp, idx) => {
+    if (!isValid(comp)) return;
+    const id = idx + 1;
+    const cw = comp.x1 - comp.x0 + 1;
+    const ch = comp.y1 - comp.y0 + 1;
+    let best: { line: number; overlap: number } | null = null;
+    lines.forEach((l, li) => {
+      let overlap = 0;
+      for (const box of l.chars) {
+        const ox = Math.min(comp.x1 + 1, box.x1) - Math.max(comp.x0, box.x0);
+        const oy = Math.min(comp.y1 + 1, box.y1) - Math.max(comp.y0, box.y0);
+        if (ox > 0 && oy > 0) overlap += ox * oy;
+      }
+      if (overlap > 0 && (!best || overlap > best.overlap)) best = { line: li, overlap };
+    });
+    if (!best) return;
+    const { line } = best as { line: number; overlap: number };
+    // Skip ruling lines and underlines: long, flat strokes spanning many characters.
+    if (cw > medianW * 3 && ch < cw * 0.12) return;
+    const l = lines[line];
+    const boundaries = [comp.x0, ...cuts[line].filter((x) => x > comp.x0 && x <= comp.x1), comp.x1 + 1];
+    for (let s = 0; s + 1 < boundaries.length; s++) {
+      const cut0 = boundaries[s];
+      const cut1 = boundaries[s + 1];
+      const mid = (cut0 + cut1) / 2;
+      let target = l.chars.findIndex((_, i) => i === l.chars.length - 1 || mid < cuts[line][i]);
+      if (target < 0) target = l.chars.length - 1;
+      let has = false;
+      for (let y = comp.y0; y <= comp.y1 && !has; y++) {
+        for (let x = cut0; x < cut1; x++) {
+          if (labels[y * W + x] === id) { has = true; break; }
+        }
+      }
+      if (has) parts[line][target].push({ comp: id, cut0, cut1 });
+    }
+  });
+
+  const rows: SampleRow[] = lines.map((l, li) => {
+    const letters: string[] = [];
+    const pieces: Piece[] = [];
+    let text = '';
+    let lastWord = -1;
+    l.chars.forEach((box, i) => {
+      // Unsure glyphs still claim their ink (so neighbours stay clean) but are not used.
+      if (!box.sure || !parts[li][i].length) return;
+      const piece = measure(ink, parts[li][i]);
+      if (piece.area < MIN_COMPONENT_AREA) return;
+      if (lastWord >= 0 && box.word !== lastWord) text += ' ';
+      text += box.c;
+      lastWord = box.word;
+      letters.push(box.c);
+      pieces.push(piece);
+    });
+    return { text, letters, pieces };
+  }).filter((r) => r.letters.length);
+  if (!rows.length) return { rows: [], error: 'No ink was found inside the characters the AI located.' };
+  return { rows };
+}
+
+/**
+ * Picks the best glyph cut-out for an AI reading: ink-driven segmentation of the
+ * AI text when every row lines up exactly (cleanest for print), otherwise the
+ * AI's per-character boxes (handles touching letters and uneven spacing).
+ */
+export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
+  const text = aiLines.map((l) => l.text).filter(Boolean).join('\n');
+  const byText = segmentSample(ink, text);
+  const expected = lettersOf(text).length;
+  if (!byText.error && byText.rows.length && byText.rows.every(rowMatched)) return { ...byText, text, source: 'text' };
+  const byBoxes = segmentFromBoxes(ink, aiLines);
+  const found = byBoxes.rows.reduce((n, r) => n + r.letters.length, 0);
+  if (!byBoxes.error && found >= expected * 0.5) {
+    return { ...byBoxes, text: byBoxes.rows.map((r) => r.text).join('\n'), source: 'boxes' };
+  }
+  return { ...byText, text, source: 'text' };
+}
+
 export function rowMatched(row: SampleRow) {
   return row.pieces.length === row.letters.length && row.letters.length > 0;
 }
@@ -741,8 +878,26 @@ export async function buildFontFromSamples(familyName: string, samples: SampleIn
   const pad = 2;
 
   for (const [ch, list] of candidates) {
-    const byArea = [...list].sort((a, b) => a.piece.area - b.piece.area);
-    const { ink, piece, base, scale } = byArea[byArea.length >> 1];
+    // A paragraph gives many copies of each letter; use the most typical one so a
+    // rushed or mis-cut copy never becomes the glyph.
+    const size = (c: Candidate) => ({
+      w: (c.piece.x1 - c.piece.x0 + 1) * c.scale,
+      h: (c.piece.y1 - c.piece.y0 + 1) * c.scale,
+      a: c.piece.area * c.scale * c.scale,
+      d: (c.piece.y1 - c.base) * c.scale,
+    });
+    const sizes = list.map(size);
+    const mw = median(sizes.map((s) => s.w)) || 1;
+    const mh = median(sizes.map((s) => s.h)) || 1;
+    const ma = median(sizes.map((s) => s.a)) || 1;
+    const md = median(sizes.map((s) => s.d));
+    let bestIndex = 0;
+    let bestScore = Infinity;
+    sizes.forEach((s, i) => {
+      const score = Math.abs(Math.log(s.w / mw)) + Math.abs(Math.log(s.h / mh)) + 0.5 * Math.abs(Math.log(s.a / ma)) + Math.abs(s.d - md) / mh;
+      if (score < bestScore) { bestScore = score; bestIndex = i; }
+    });
+    const { ink, piece, base, scale } = list[bestIndex];
 
     const gw = piece.x1 - piece.x0 + 1 + pad * 2;
     const gh = piece.y1 - piece.y0 + 1 + pad * 2;
