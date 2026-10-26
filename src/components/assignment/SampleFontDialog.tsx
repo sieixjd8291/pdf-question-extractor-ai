@@ -41,7 +41,13 @@ async function readHandwriting(imageData: string): Promise<AiLine[]> {
     body: JSON.stringify({ imageData }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'AI could not read the image.');
+  if (!res.ok) {
+    if (typeof data.error === 'string') throw new Error(data.error);
+    if (res.status === 404) throw new Error('The AI service is not available on this deployment.');
+    if (res.status === 413) throw new Error('This image is too large for AI reading. Try a smaller or cropped image.');
+    if (res.status === 504 || res.status === 408) throw new Error('AI took too long to read this image. Try again, or split it into smaller samples.');
+    throw new Error(`AI could not read the image (error ${res.status}).`);
+  }
   const lines: AiLine[] = Array.isArray(data.lines)
     ? data.lines.map((l: unknown) => (typeof l === 'string' ? { text: l, chars: [] } : (l as AiLine)))
     : [];
