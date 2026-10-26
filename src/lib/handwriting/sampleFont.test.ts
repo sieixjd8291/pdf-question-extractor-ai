@@ -151,3 +151,25 @@ test('wrapped alphabet row does not steal letters from the next typed line', () 
   assert.deepEqual(seg.rows.map((r) => r.text), ['ABCDEFGHIJKLMNOPQRSTUVWX', 'YZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789']);
   assert.ok(seg.rows.every(rowMatched));
 });
+
+test('rows joined by a touching descender are still split into two lines', () => {
+  const rects: Rect[] = [];
+  for (let i = 0; i < 8; i++) rects.push([10 + i * 40, 20, 28, 30]);
+  for (let i = 0; i < 8; i++) rects.push([10 + i * 40, 75, 28, 30]);
+  rects.push([130, 20, 4, 60]); // descender from row 1 running into row 2
+  const seg = segmentSample(buildInkMap(image(360, 120, rects)), 'abcdefgh\nijklmnop');
+  assert.equal(seg.error, undefined);
+  assert.equal(seg.rows.length, 2);
+});
+
+test('a row of capitals with dense top and bottom bars stays one line', () => {
+  const rects: Rect[] = [];
+  for (let i = 0; i < 6; i++) {
+    const x = 10 + i * 40;
+    rects.push([x, 20, 28, 5], [x, 40, 20, 4], [x, 55, 28, 5], [x, 20, 5, 40]);
+  }
+  const seg = segmentSample(buildInkMap(image(260, 80, rects)), 'EEEEEE');
+  assert.equal(seg.error, undefined);
+  assert.equal(seg.rows.length, 1);
+  assert.ok(rowMatched(seg.rows[0]));
+});

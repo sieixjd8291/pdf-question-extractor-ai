@@ -13,10 +13,10 @@ import {
   resolveApiKey,
   AiHandlerResult,
   GEMINI_MODEL_CHAIN,
-} from "./aiHandlers";
-import { compileLatex } from "./latexHandler";
-import { automaticallyRepairLatex } from "./latexRepairHandler";
-import { handleAutoOrientRoute } from "./handwrittenOrientationService";
+} from "./aiHandlers.js";
+import { compileLatex } from "./latexHandler.js";
+import { automaticallyRepairLatex } from "./latexRepairHandler.js";
+import { handleAutoOrientRoute } from "./handwrittenOrientationService.js";
 import multer from "multer";
 
 const upload = multer({
@@ -134,6 +134,14 @@ app.use("/api", (_req, res) => {
   res.status(404).json({ error: "API route not found." });
 });
 
+function sendError(error: any, _req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (res.headersSent) return next(error);
+  const status = Number(error?.status || error?.statusCode) || 500;
+  res.status(status).json({ error: status === 500 ? "Internal server error." : error?.message || "Request failed." });
+}
+
+export default app;
+
 async function startServer() {
   const httpServer = createHttpServer(app);
   // Vite middleware in development
@@ -157,15 +165,16 @@ async function startServer() {
     });
   }
 
-  app.use((error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (res.headersSent) return next(error);
-    const status = Number(error?.status || error?.statusCode) || 500;
-    res.status(status).json({ error: status === 500 ? "Internal server error." : error?.message || "Request failed." });
-  });
+  app.use(sendError);
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`PDF Studio server listening on port ${PORT}`);
   });
 }
 
-startServer().catch(error=>{console.error("Server startup failed:",error);process.exit(1);});
+// On Vercel the app runs as a serverless function (api/index.ts) instead of a long-lived server.
+if (process.env.VERCEL) {
+  app.use(sendError);
+} else {
+  startServer().catch(error=>{console.error("Server startup failed:",error);process.exit(1);});
+}

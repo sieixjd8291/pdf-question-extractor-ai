@@ -473,17 +473,113 @@ function autoAssign(ink: InkMap, pieces: Piece[], text: string): Piece[] {
 interface Band { y0: number; y1: number }
 
 /**
- * Rows of writing from the vertical ink profile. Thin bands (i dots and accents
- * floating above a line without ascenders) are folded into their nearest line.
+ * Splits a band at the sparsest row where the strokes on each side clearly
+ * belong to different lines. Pixel density alone would also cut capitals in
+ * half (dense top and bottom bars), so a cut is only kept when nearly all ink
+ * sits in strokes that are mostly above or mostly below it.
  */
-function findLineBands(profile: Uint32Array): Band[] {
-  const bands: Band[] = [];
-  for (let y = 0; y < profile.length; y++) {
-    if (!profile[y]) continue;
-    const y0 = y;
-    while (y < profile.length && profile[y]) y++;
-    bands.push({ y0, y1: y - 1 });
+function splitBand(ink: InkMap, isInk: Uint8Array, band: Band, density: Float64Array, centroid: Float64Array): Band[] {
+  const h = band.y1 - band.y0 + 1;
+  if (h < 12) return [band];
+  let peak = 0;
+  for (let y = band.y0; y <= band.y1; y++) peak = Math.max(peak, density[y]);
+  const margin = Math.max(3, Math.round(h * 0.15));
+  const candidates: number[] = [];
+  for (let y = band.y0 + margin; y <= band.y1 - margin; y++) {
+    const v = density[y];
+    if (v > peak * 0.35 || v > density[y - 1] || v > density[y + 1]) continue;
+    let above = 0;
+    let below = 0;
+    for (let t = band.y0; t < y; t++) above = Math.max(above, density[t]);
+    for (let t = y + 1; t <= band.y1; t++) below = Math.max(below, density[t]);
+    if (v <= Math.min(above, below) * 0.45) candidates.push(y);
   }
+  candidates.sort((a, b) => density[a] - density[b]);
+
+  const { width: W, labels } = ink;
+  for (const cut of candidates.slice(0, 8)) {
+    const above = new Map<number, number>();
+    const below = new Map<number, number>();
+    for (let y = band.y0; y <= band.y1; y++) {
+      const side = y < cut ? above : below;
+      for (let x = 0; x < W; x++) {
+        const id = labels[y * W + x];
+        if (id && isInk[id]) side.set(id, (side.get(id) ?? 0) + 1);
+      }
+    }
+    let total = 0;
+    let mixed = 0;
+    let topMass = 0;
+    let bottomMass = 0;
+    for (const id of new Set([...above.keys(), ...below.keys()])) {
+      const a = above.get(id) ?? 0;
+      const b = below.get(id) ?? 0;
+      total += a + b;
+      const share = a / (a + b);
+      if (share >= 0.8) topMass += a + b;
+      else if (share <= 0.2) bottomMass += a + b;
+      else mixed += a + b;
+    }
+    // Both sides need real writing (not just i dots), and few strokes may straddle.
+    const hasRow = (lo: number, hi: number) => {
+      let n = 0;
+      for (const id of new Set([...above.keys(), ...below.keys()])) {
+        if (centroid[id] >= lo && centroid[id] <= hi) n++;
+      }
+      return n >= 2;
+    };
+    if (
+      mixed <= total * 0.2 &&
+      topMass >= total * 0.15 &&
+      bottomMass >= total * 0.15 &&
+      hasRow(band.y0, cut - 1) &&
+      hasRow(cut, band.y1)
+    ) {
+      return [
+        ...splitBand(ink, isInk, { y0: band.y0, y1: cut - 1 }, density, centroid),
+        ...splitBand(ink, isInk, { y0: cut, y1: band.y1 }, density, centroid),
+      ];
+    }
+  }
+  return [band];
+}
+
+/**
+ * Rows of writing from the horizontal ink density. Rows whose ascenders and
+ * descenders touch are split at the sparse gap between them; thin bands (i dots
+ * and accents floating above a line) are folded into their nearest line.
+ */
+function findLineBands(ink: InkMap, valid: number[], centroid: Float64Array): Band[] {
+  const { width: W, height: H, labels } = ink;
+  const isInk = new Uint8Array(ink.components.length + 1);
+  for (const id of valid) isInk[id] = 1;
+  const raw = new Float64Array(H);
+  for (let y = 0; y < H; y++) {
+    let n = 0;
+    for (let x = 0; x < W; x++) {
+      const id = labels[y * W + x];
+      if (id && isInk[id]) n++;
+    }
+    raw[y] = n;
+  }
+  const heights = valid.map((id) => ink.components[id - 1].y1 - ink.components[id - 1].y0 + 1);
+  const win = Math.max(1, Math.round(median(heights) / 10));
+  const density = new Float64Array(H);
+  for (let y = 0; y < H; y++) {
+    let s = 0;
+    let c = 0;
+    for (let t = Math.max(0, y - win); t <= Math.min(H - 1, y + win); t++) { s += raw[t]; c++; }
+    density[y] = s / c;
+  }
+
+  const spans: Band[] = [];
+  for (let y = 0; y < H; y++) {
+    if (!raw[y]) continue;
+    const y0 = y;
+    while (y < H && raw[y]) y++;
+    spans.push({ y0, y1: y - 1 });
+  }
+  const bands = spans.flatMap((b) => splitBand(ink, isInk, b, density, centroid));
   const height = (b: Band) => b.y1 - b.y0 + 1;
   while (bands.length > 1) {
     const tallest = Math.max(...bands.map(height));
@@ -605,12 +701,21 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
   const valid = ink.components.map((c, i) => (isValid(c) ? i + 1 : 0)).filter(Boolean);
   if (!valid.length) return { rows: [], error: 'No handwriting was found in this image.' };
 
-  const profile = new Uint32Array(ink.height);
+  // Vertical centre of each stroke's ink (not its box), so a long descender or
+  // ascender doesn't pull a word into the neighbouring line.
+  const centroid = new Float64Array(ink.components.length + 1);
   for (const id of valid) {
     const c = ink.components[id - 1];
-    for (let y = c.y0; y <= c.y1; y++) profile[y]++;
+    let sum = 0;
+    let n = 0;
+    for (let y = c.y0; y <= c.y1; y++) {
+      for (let x = c.x0; x <= c.x1; x++) {
+        if (ink.labels[y * ink.width + x] === id) { sum += y; n++; }
+      }
+    }
+    centroid[id] = n ? sum / n : (c.y0 + c.y1) / 2;
   }
-  const bands = findLineBands(profile);
+  const bands = findLineBands(ink, valid, centroid);
   if (lines.length > bands.length) {
     return {
       rows: [],
@@ -620,8 +725,7 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
 
   const buckets: number[][] = bands.map(() => []);
   for (const id of valid) {
-    const c = ink.components[id - 1];
-    const cy = (c.y0 + c.y1) / 2;
+    const cy = centroid[id];
     let row = 0;
     let bestDist = Infinity;
     bands.forEach((b, i) => {
