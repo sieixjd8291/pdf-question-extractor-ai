@@ -126,3 +126,16 @@ test('segmentWithAi falls back to glyph boxes when text segmentation cannot line
   assert.ok(seg.rows.every(rowMatched));
   assert.equal(seg.rows[0].letters.join(''), 'abc');
 });
+
+test('AI boxes keep sentence word spacing and skip unsure glyphs', () => {
+  const ink = buildInkMap(image(300, 100, [[10, 20, 30, 40], [50, 20, 30, 40], [150, 20, 30, 40], [190, 20, 30, 40]]));
+  const seg = segmentFromBoxes(ink, [{ text: 'hi yo', chars: [
+    { c: 'h', box: [0.03, 0.2, 0.14, 0.6] },
+    { c: 'i', box: [0.16, 0.2, 0.27, 0.6] },
+    { c: 'y', box: [0.49, 0.2, 0.6, 0.6], sure: false },
+    { c: 'o', box: [0.63, 0.2, 0.74, 0.6] },
+  ] }]);
+  assert.equal(seg.rows[0].text, 'hi o');
+  assert.deepEqual(seg.rows[0].letters, ['h', 'i', 'o']);
+  assert.ok(rowMatched(seg.rows[0]));
+});

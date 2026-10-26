@@ -626,8 +626,31 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
 }
 
 /** One character located by the AI; box is [x0, y0, x1, y1] as fractions of the image. */
-export interface AiChar { c: string; box: [number, number, number, number] }
+export interface AiChar { c: string; box: [number, number, number, number]; sure?: boolean }
 export interface AiLine { text: string; chars: AiChar[] }
+
+/** Word number of each AI char, taken from the line text so sentences keep their spaces. */
+function wordIndexes(line: AiLine): number[] {
+  const words = line.text.split(/\s+/).filter(Boolean);
+  const flat = words.join('');
+  const chars = line.chars.map((ch) => ch.c).join('');
+  if (Array.from(flat).length !== line.chars.length || flat !== chars) {
+    // Box list and text disagree: fall back to gaps wider than the typical letter gap.
+    const out: number[] = [];
+    const gaps = line.chars.slice(1).map((ch, i) => ch.box[0] - line.chars[i].box[2]);
+    const typical = [...gaps].sort((a, b) => a - b)[gaps.length >> 1] ?? 0;
+    const width = median(line.chars.map((ch) => ch.box[2] - ch.box[0]));
+    let w = 0;
+    line.chars.forEach((_, i) => {
+      if (i > 0 && gaps[i - 1] > Math.max(typical * 2.5, width * 0.45)) w++;
+      out.push(w);
+    });
+    return out;
+  }
+  const out: number[] = [];
+  words.forEach((word, wi) => Array.from(word).forEach(() => out.push(wi)));
+  return out;
+}
 
 /**
  * Cuts out one glyph per AI-located character. The AI boxes only say roughly
@@ -638,15 +661,21 @@ export interface AiLine { text: string; chars: AiChar[] }
 export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
   const { width: W, height: H, labels, components } = ink;
   const lines = aiLines
-    .map((l) => ({
+    .map((l) => {
+      const word = wordIndexes(l);
+      return {
       chars: l.chars
-        .map((ch) => {
+        .map((ch, i) => {
           const [a, b, c, d] = ch.box;
-          return { c: ch.c, x0: Math.floor(a * W), y0: Math.floor(b * H), x1: Math.ceil(c * W), y1: Math.ceil(d * H) };
+          return {
+            c: ch.c, word: word[i] ?? 0, sure: ch.sure !== false,
+            x0: Math.floor(a * W), y0: Math.floor(b * H), x1: Math.ceil(c * W), y1: Math.ceil(d * H),
+          };
         })
         .filter((ch) => ch.x1 > ch.x0 && ch.y1 > ch.y0 && !/\s/.test(ch.c))
         .sort((p, q) => p.x0 + p.x1 - (q.x0 + q.x1)),
-    }))
+      };
+    })
     .filter((l) => l.chars.length);
   if (!lines.length) return { rows: [], error: 'AI did not locate any characters.' };
 
@@ -696,14 +725,20 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
   const rows: SampleRow[] = lines.map((l, li) => {
     const letters: string[] = [];
     const pieces: Piece[] = [];
+    let text = '';
+    let lastWord = -1;
     l.chars.forEach((box, i) => {
-      if (!parts[li][i].length) return;
+      // Unsure glyphs still claim their ink (so neighbours stay clean) but are not used.
+      if (!box.sure || !parts[li][i].length) return;
       const piece = measure(ink, parts[li][i]);
       if (piece.area < MIN_COMPONENT_AREA) return;
+      if (lastWord >= 0 && box.word !== lastWord) text += ' ';
+      text += box.c;
+      lastWord = box.word;
       letters.push(box.c);
       pieces.push(piece);
     });
-    return { text: letters.join(''), letters, pieces };
+    return { text, letters, pieces };
   }).filter((r) => r.letters.length);
   if (!rows.length) return { rows: [], error: 'No ink was found inside the characters the AI located.' };
   return { rows };
@@ -843,8 +878,26 @@ export async function buildFontFromSamples(familyName: string, samples: SampleIn
   const pad = 2;
 
   for (const [ch, list] of candidates) {
-    const byArea = [...list].sort((a, b) => a.piece.area - b.piece.area);
-    const { ink, piece, base, scale } = byArea[byArea.length >> 1];
+    // A paragraph gives many copies of each letter; use the most typical one so a
+    // rushed or mis-cut copy never becomes the glyph.
+    const size = (c: Candidate) => ({
+      w: (c.piece.x1 - c.piece.x0 + 1) * c.scale,
+      h: (c.piece.y1 - c.piece.y0 + 1) * c.scale,
+      a: c.piece.area * c.scale * c.scale,
+      d: (c.piece.y1 - c.base) * c.scale,
+    });
+    const sizes = list.map(size);
+    const mw = median(sizes.map((s) => s.w)) || 1;
+    const mh = median(sizes.map((s) => s.h)) || 1;
+    const ma = median(sizes.map((s) => s.a)) || 1;
+    const md = median(sizes.map((s) => s.d));
+    let bestIndex = 0;
+    let bestScore = Infinity;
+    sizes.forEach((s, i) => {
+      const score = Math.abs(Math.log(s.w / mw)) + Math.abs(Math.log(s.h / mh)) + 0.5 * Math.abs(Math.log(s.a / ma)) + Math.abs(s.d - md) / mh;
+      if (score < bestScore) { bestScore = score; bestIndex = i; }
+    });
+    const { ink, piece, base, scale } = list[bestIndex];
 
     const gw = piece.x1 - piece.x0 + 1 + pad * 2;
     const gh = piece.y1 - piece.y0 + 1 + pad * 2;

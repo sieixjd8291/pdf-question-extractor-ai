@@ -713,6 +713,9 @@ Rules:
 - Preserve every character exactly as written: case, digits, punctuation, symbols. Do not correct spelling, do not complete sequences, do not add or drop characters.
 - Separate words with a single space only where there is a visible gap between words. Letters written as a continuous run (e.g. an alphabet "ABCDEF") stay together without spaces.
 - Ignore anything that is not handwriting: spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.
+- The writing may be words, sentences or whole paragraphs, not just alphabets. Read it the way a person would: use the surrounding word and sentence to decide what each ambiguous shape is (l vs I vs 1, O vs 0, S vs 5, Z vs 2, rn vs m, cl vs d, u vs v, a vs o, g vs q, n vs h). Letters inside words are letters, digits inside numbers are digits, capitals start sentences and names.
+- Use context ONLY to identify what a written shape is. Never insert, remove or reorder characters, and never fix a genuine misspelling.
+- Set "sure" to false for a character that is illegible, crossed out, smudged, overlapping another character, or still ambiguous after using context; otherwise true.
 - For EVERY character (not spaces) also return its glyph bounding box as box_2d = [ymin, xmin, ymax, xmax], normalized to 0-1000 of the image height/width. The box must tightly enclose all ink of that one character, including dots (i, j), accents and descenders, and nothing of its neighbours.
 - "chars" must list the characters of "text" in reading order (left to right), one entry per non-space character, so joining chars[].c equals text with spaces removed.`;
 
@@ -722,7 +725,7 @@ Rules:
   ], {
     responseMimeType: "application/json",
     temperature: 0,
-    maxOutputTokens: 16384,
+    maxOutputTokens: 32768,
     responseSchema: {
       type: Type.OBJECT,
       properties: {
@@ -740,8 +743,9 @@ Rules:
                   properties: {
                     c: { type: Type.STRING, description: "Exactly one character" },
                     box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER }, description: "[ymin, xmin, ymax, xmax] in 0-1000" },
+                    sure: { type: Type.BOOLEAN, description: "False when the glyph is illegible or still ambiguous" },
                   },
-                  required: ["c", "box_2d"],
+                  required: ["c", "box_2d", "sure"],
                 },
               },
             },
@@ -764,7 +768,7 @@ Rules:
           const c = Array.from(String(ch?.c ?? "").trim())[0];
           const b = Array.isArray(ch?.box_2d) ? ch.box_2d.map(clamp) : [];
           if (!c || b.length !== 4 || b[2] <= b[0] || b[3] <= b[1]) return null;
-          return { c, box: [b[1] / 1000, b[0] / 1000, b[3] / 1000, b[2] / 1000] as [number, number, number, number] };
+          return { c, sure: ch?.sure !== false, box: [b[1] / 1000, b[0] / 1000, b[3] / 1000, b[2] / 1000] as [number, number, number, number] };
         })
         .filter(Boolean);
       return { text: lineText, chars };
