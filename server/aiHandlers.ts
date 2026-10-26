@@ -698,6 +698,46 @@ Return JSON.`;
 }
 
 /**
+ * POST /api/transcribe-handwriting
+ * Reads a handwriting sample image character by character so the font maker
+ * can match every cut-out glyph to the right letter.
+ */
+export async function transcribeHandwritingHandler(body: any, apiKey: string): Promise<AiHandlerResult> {
+  const imageData = body?.imageData;
+  if (typeof imageData !== "string" || !imageData) throw new InvalidPayloadError("Missing imageData in request body");
+  const mimeType = /^data:(image\/(?:png|jpeg|webp));base64,/.exec(imageData)?.[1] ?? "image/png";
+
+  const prompt = `Transcribe the handwriting in this image EXACTLY, character by character.
+Rules:
+- Return one array entry per visual line of writing, top to bottom, in the same order as they appear. If a sequence wraps onto a new line in the image, that is a new entry.
+- Preserve every character exactly as written: case, digits, punctuation, symbols. Do not correct spelling, do not complete sequences, do not add or drop characters.
+- Separate words with a single space only where there is a visible gap between words. Letters written as a continuous run (e.g. an alphabet "ABCDEF") stay together without spaces.
+- Ignore anything that is not handwriting: spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.`;
+
+  const { text, modelUsed } = await generateJsonWithFallback(apiKey, [
+    { inlineData: { mimeType, data: cleanBase64(imageData) } },
+    { text: prompt },
+  ], {
+    responseMimeType: "application/json",
+    temperature: 0,
+    maxOutputTokens: 2048,
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        lines: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Each visual line of handwriting, top to bottom" },
+      },
+      required: ["lines"],
+    },
+  });
+
+  const parsed = parseModelJson(text);
+  const lines: string[] = Array.isArray(parsed?.lines)
+    ? parsed.lines.map((l: unknown) => String(l).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 80)
+    : [];
+  return { json: { lines }, modelUsed };
+}
+
+/**
  * POST /api/validate-gemini-key
  * Lightweight check that a user-supplied key actually works with the model chain.
  * Returns 200 with { valid: false } (instead of an HTTP error) so the UI can

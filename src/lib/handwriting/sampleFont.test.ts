@@ -74,3 +74,29 @@ test('mismatched line counts produce a helpful error', () => {
   const seg = segmentSample(buildInkMap(image(120, 100, letterBox(10))), 'a\nb');
   assert.match(seg.error ?? '', /line/);
 });
+
+test('a single word that wraps over rows is split between them (alphabet case)', () => {
+  // "ABCDE" written as "ABC" / "DE", then "fg" on its own row; typed as two lines.
+  const rects: Rect[] = [];
+  for (const x of [10, 50, 90]) rects.push([x, 20, 30, 40]);
+  for (const x of [10, 50]) rects.push([x, 100, 30, 40]);
+  for (const x of [10, 50]) rects.push([x, 180, 30, 40]);
+  const seg = segmentSample(buildInkMap(image(200, 240, rects)), 'ABCDE\nfg');
+  assert.equal(seg.error, undefined);
+  assert.deepEqual(seg.rows.map((r) => r.text), ['ABC', 'DE', 'fg']);
+  assert.ok(seg.rows.every(rowMatched));
+});
+
+test('red spell-check squiggles under dark ink are ignored', () => {
+  const img = image(200, 100, [...letterBox(10), ...letterBox(60), ...letterBox(110)]);
+  // A red line touching the bottom of every letter would glue them into one blob.
+  for (let y = 78; y < 84; y++) {
+    for (let x = 5; x < 150; x++) {
+      const o = (y * 200 + x) * 4;
+      img.data[o] = 230; img.data[o + 1] = 30; img.data[o + 2] = 30;
+    }
+  }
+  const seg = segmentSample(buildInkMap(img), 'abc');
+  assert.ok(rowMatched(seg.rows[0]));
+  assert.ok(seg.rows[0].pieces.every((p) => p.x1 - p.x0 < 40), 'letters stay separate');
+});

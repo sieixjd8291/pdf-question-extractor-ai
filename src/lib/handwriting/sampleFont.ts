@@ -81,15 +81,54 @@ export function buildInkMap(img: ImageData): InkMap {
   const { width: w, height: h, data } = img;
   const n = w * h;
   const gray = new Uint8Array(n);
-  const hist = new Uint32Array(256);
+  const chroma = new Uint8Array(n);
+  const hueBin = new Uint8Array(n);
+  let hist = new Uint32Array(256);
   for (let i = 0; i < n; i++) {
     const a = data[i * 4 + 3] / 255;
-    const lum = data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114;
-    const v = (lum * a + 255 * (1 - a)) | 0;
+    const r = data[i * 4] * a + 255 * (1 - a);
+    const g = data[i * 4 + 1] * a + 255 * (1 - a);
+    const b = data[i * 4 + 2] * a + 255 * (1 - a);
+    const v = (r * 0.299 + g * 0.587 + b * 0.114) | 0;
     gray[i] = v;
     hist[v]++;
+    const max = Math.max(r, g, b);
+    const c = max - Math.min(r, g, b);
+    chroma[i] = c;
+    if (c > 0) {
+      const hue = max === r ? ((g - b) / c + 6) % 6 : max === g ? (b - r) / c + 2 : (r - g) / c + 4;
+      hueBin[i] = Math.min(35, (hue * 6) | 0);
+    }
   }
-  const threshold = otsuThreshold(hist, n);
+  let threshold = otsuThreshold(hist, n);
+
+  // Drop colored marks that are not the pen (red spell-check squiggles, highlighter,
+  // colored ruling): with dark ink every strongly colored pixel goes; with colored
+  // ink only pixels far from the pen's hue go. Otherwise a squiggle under a line
+  // glues all its letters into one blob.
+  const COLORED = 90;
+  let dark = 0;
+  let colored = 0;
+  const hueCount = new Uint32Array(36);
+  for (let i = 0; i < n; i++) {
+    if (gray[i] > threshold) continue;
+    dark++;
+    if (chroma[i] >= COLORED) {
+      colored++;
+      hueCount[hueBin[i]]++;
+    }
+  }
+  if (colored > 0) {
+    const coloredPen = colored > dark * 0.5;
+    const penHue = hueCount.indexOf(Math.max(...hueCount));
+    const offHue = (bin: number) => Math.min(Math.abs(bin - penHue), 36 - Math.abs(bin - penHue)) > 3;
+    hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) {
+      if (chroma[i] >= COLORED && (!coloredPen || offHue(hueBin[i]))) gray[i] = 255;
+      hist[gray[i]]++;
+    }
+    threshold = otsuThreshold(hist, n);
+  }
 
   const labels = new Int32Array(n);
   for (let i = 0; i < n; i++) if (gray[i] <= threshold) labels[i] = -1;
@@ -470,19 +509,31 @@ function inkCoverage(ink: InkMap, ids: number[]): number {
 }
 
 /**
- * Splits the typed words into one line per row of writing, so a sentence typed
- * on a single line still matches writing that wraps onto several lines.
+ * Splits the typed text into one line per row of writing, so text typed on fewer
+ * lines still matches writing that wraps (e.g. an alphabet typed as one word but
+ * written over two rows). Rows break between words when possible, inside a word
+ * when needed, and never span a typed line break when there are enough rows.
  */
-function spreadWords(words: string[], coverage: number[]): string[] | null {
-  const R = coverage.length;
-  const N = words.length;
+export function spreadText(lines: string[], weights: number[]): string[] | null {
+  const R = weights.length;
+  const letters: string[] = [];
+  const lineOf: number[] = [];
+  const spaceBefore: boolean[] = [];
+  const breakCost: number[] = [];
+  lines.forEach((line, li) => {
+    line.split(/\s+/).filter(Boolean).forEach((word, wi) => {
+      Array.from(word).forEach((ch, ci) => {
+        spaceBefore.push(ci === 0 && wi > 0);
+        breakCost.push(ci > 0 ? 0.003 : wi > 0 ? 0.0005 : 0);
+        letters.push(ch);
+        lineOf.push(li);
+      });
+    });
+  });
+  const N = letters.length;
   if (N < R) return null;
-  const totalCov = coverage.reduce((a, b) => a + b, 0) || 1;
-  // A space costs roughly one letter of width.
-  const lens = words.map((w) => Array.from(w).length + 1);
-  const prefix = [0];
-  for (const l of lens) prefix.push(prefix[prefix.length - 1] + l);
-  const total = prefix[N];
+  const keepLines = lines.length <= R;
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
   const cost: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(Infinity));
   const from: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(-1));
   cost[0][0] = 0;
@@ -491,7 +542,8 @@ function spreadWords(words: string[], coverage: number[]): string[] | null {
       for (let start = r - 1; start < end; start++) {
         const prev = cost[r - 1][start];
         if (prev === Infinity) continue;
-        const c = prev + ((prefix[end] - prefix[start]) / total - coverage[r - 1] / totalCov) ** 2;
+        if (keepLines && lineOf[start] !== lineOf[end - 1]) continue;
+        const c = prev + ((end - start) / N - weights[r - 1] / totalWeight) ** 2 + (r > 1 ? breakCost[start] : 0);
         if (c < cost[r][end]) {
           cost[r][end] = c;
           from[r][end] = start;
@@ -499,12 +551,17 @@ function spreadWords(words: string[], coverage: number[]): string[] | null {
       }
     }
   }
+  if (cost[R][N] === Infinity) return null;
   const bounds = [N];
   for (let r = R, end = N; r > 0; r--) {
     end = from[r][end];
     bounds.unshift(end);
   }
-  return Array.from({ length: R }, (_, r) => words.slice(bounds[r], bounds[r + 1]).join(' '));
+  return Array.from({ length: R }, (_, r) => {
+    let out = '';
+    for (let i = bounds[r]; i < bounds[r + 1]; i++) out += (spaceBefore[i] && i > bounds[r] ? ' ' : '') + letters[i];
+    return out;
+  });
 }
 
 export function segmentSample(ink: InkMap, text: string): Segmentation {
@@ -543,11 +600,18 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
   }
 
   if (lines.length < bands.length) {
-    const spread = spreadWords(lines.join(' ').split(/\s+/).filter(Boolean), buckets.map((ids) => inkCoverage(ink, ids)));
+    // Weigh rows by how many glyph pieces they hold (close to their letter count
+    // for print), blended with ink width so joined writing still counts.
+    const pieceCounts = buckets.map((ids) => clusterRow(ink, ids).length);
+    const coverage = buckets.map((ids) => inkCoverage(ink, ids));
+    const pieceTotal = pieceCounts.reduce((a, b) => a + b, 0) || 1;
+    const coverTotal = coverage.reduce((a, b) => a + b, 0) || 1;
+    const weights = pieceCounts.map((p, i) => 0.7 * (p / pieceTotal) + 0.3 * (coverage[i] / coverTotal));
+    const spread = spreadText(lines, weights);
     if (!spread) {
       return {
         rows: [],
-        error: `Found ${bands.length} lines of writing but your text has fewer words than that. Check the text matches the image.`,
+        error: `Found ${bands.length} lines of writing but your text only has ${lettersOf(lines.join('')).length} characters. Check the text matches the image.`,
       };
     }
     lines.splice(0, lines.length, ...spread);
@@ -753,7 +817,7 @@ export async function buildFontFromSamples(familyName: string, samples: SampleIn
   return { buffer: font.toArrayBuffer(), chars: chars.sort() };
 }
 
-export async function loadSampleImage(file: File): Promise<{ ink: InkMap; url: string }> {
+export async function loadSampleImage(file: File): Promise<{ ink: InkMap; url: string; aiImage: string }> {
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.decoding = 'async';
@@ -773,5 +837,11 @@ export async function loadSampleImage(file: File): Promise<{ ink: InkMap; url: s
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
-  return { ink: buildInkMap(ctx.getImageData(0, 0, w, h)), url };
+  const ink = buildInkMap(ctx.getImageData(0, 0, w, h));
+  const aiScale = Math.min(1, 1600 / Math.max(w, h));
+  const small = document.createElement('canvas');
+  small.width = Math.max(1, Math.round(w * aiScale));
+  small.height = Math.max(1, Math.round(h * aiScale));
+  small.getContext('2d')!.drawImage(canvas, 0, 0, small.width, small.height);
+  return { ink, url, aiImage: small.toDataURL('image/jpeg', 0.9) };
 }
