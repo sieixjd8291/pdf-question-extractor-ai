@@ -712,7 +712,9 @@ Rules:
 - Return one array entry per visual line of writing, top to bottom, in the same order as they appear. If a sequence wraps onto a new line in the image, that is a new entry.
 - Preserve every character exactly as written: case, digits, punctuation, symbols. Do not correct spelling, do not complete sequences, do not add or drop characters.
 - Separate words with a single space only where there is a visible gap between words. Letters written as a continuous run (e.g. an alphabet "ABCDEF") stay together without spaces.
-- Ignore anything that is not handwriting: spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.`;
+- Ignore anything that is not handwriting: spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.
+- For EVERY character (not spaces) also return its glyph bounding box as box_2d = [ymin, xmin, ymax, xmax], normalized to 0-1000 of the image height/width. The box must tightly enclose all ink of that one character, including dots (i, j), accents and descenders, and nothing of its neighbours.
+- "chars" must list the characters of "text" in reading order (left to right), one entry per non-space character, so joining chars[].c equals text with spaces removed.`;
 
   const { text, modelUsed } = await generateJsonWithFallback(apiKey, [
     { inlineData: { mimeType, data: cleanBase64(imageData) } },
@@ -720,20 +722,54 @@ Rules:
   ], {
     responseMimeType: "application/json",
     temperature: 0,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 16384,
     responseSchema: {
       type: Type.OBJECT,
       properties: {
-        lines: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Each visual line of handwriting, top to bottom" },
+        lines: {
+          type: Type.ARRAY,
+          description: "Each visual line of handwriting, top to bottom",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              text: { type: Type.STRING },
+              chars: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    c: { type: Type.STRING, description: "Exactly one character" },
+                    box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER }, description: "[ymin, xmin, ymax, xmax] in 0-1000" },
+                  },
+                  required: ["c", "box_2d"],
+                },
+              },
+            },
+            required: ["text", "chars"],
+          },
+        },
       },
       required: ["lines"],
     },
   });
 
   const parsed = parseModelJson(text);
-  const lines: string[] = Array.isArray(parsed?.lines)
-    ? parsed.lines.map((l: unknown) => String(l).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 80)
-    : [];
+  const clamp = (v: unknown) => Math.max(0, Math.min(1000, Number(v) || 0));
+  const lines = (Array.isArray(parsed?.lines) ? parsed.lines : [])
+    .slice(0, 80)
+    .map((l: any) => {
+      const lineText = String(typeof l === "string" ? l : l?.text ?? "").replace(/\s+/g, " ").trim();
+      const chars = (Array.isArray(l?.chars) ? l.chars : [])
+        .map((ch: any) => {
+          const c = Array.from(String(ch?.c ?? "").trim())[0];
+          const b = Array.isArray(ch?.box_2d) ? ch.box_2d.map(clamp) : [];
+          if (!c || b.length !== 4 || b[2] <= b[0] || b[3] <= b[1]) return null;
+          return { c, box: [b[1] / 1000, b[0] / 1000, b[3] / 1000, b[2] / 1000] as [number, number, number, number] };
+        })
+        .filter(Boolean);
+      return { text: lineText, chars };
+    })
+    .filter((l: { text: string }) => l.text);
   return { json: { lines }, modelUsed };
 }
 

@@ -8,7 +8,9 @@ import {
   mergePieces,
   rowMatched,
   segmentSample,
+  segmentWithAi,
   splitPiece,
+  type AiLine,
   type InkMap,
   type SampleRow,
 } from '../../lib/handwriting/sampleFont';
@@ -32,7 +34,7 @@ interface Sample {
 
 type Selection = { row: number; index: number } | null;
 
-async function readHandwriting(imageData: string): Promise<string> {
+async function readHandwriting(imageData: string): Promise<AiLine[]> {
   const res = await fetch('/api/transcribe-handwriting', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...geminiAuthHeaders() },
@@ -40,9 +42,11 @@ async function readHandwriting(imageData: string): Promise<string> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'AI could not read the image.');
-  const lines: string[] = Array.isArray(data.lines) ? data.lines : [];
-  if (!lines.length) throw new Error('AI found no handwriting in this image.');
-  return lines.join('\n');
+  const lines: AiLine[] = Array.isArray(data.lines)
+    ? data.lines.map((l: unknown) => (typeof l === 'string' ? { text: l, chars: [] } : (l as AiLine)))
+    : [];
+  if (!lines.some((l) => l.text)) throw new Error('AI found no handwriting in this image.');
+  return lines;
 }
 
 function SampleOverlay({ sample, selection, onSelect }: { sample: Sample; selection: Selection; onSelect: (s: Selection) => void }) {
@@ -100,8 +104,19 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
   const runAi = async (id: number, aiImage: string) => {
     updateSample(id, (s) => ({ ...s, reading: true, aiNote: undefined }));
     try {
-      const text = await readHandwriting(aiImage);
-      updateSample(id, (s) => ({ ...applyText(s, text), reading: false, aiNote: 'Read by AI. Check every character before creating the font.' }));
+      const aiLines = await readHandwriting(aiImage);
+      updateSample(id, (s) => {
+        const seg = segmentWithAi(s.ink, aiLines);
+        const count = seg.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0);
+        return {
+          ...s,
+          text: seg.text,
+          rows: seg.rows,
+          error: seg.error,
+          reading: false,
+          aiNote: `AI found ${count} glyph${count === 1 ? '' : 's'}. Click any box to check, merge or split it before creating the font.`,
+        };
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'AI could not read the image.';
       updateSample(id, (s) => ({ ...s, reading: false, aiNote: `${message} Type the text yourself instead.` }));

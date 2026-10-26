@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInkMap, rowMatched, segmentSample, type Piece } from './sampleFont';
+import { buildInkMap, rowMatched, segmentSample, segmentFromBoxes, segmentWithAi, type Piece } from './sampleFont';
 
 type Rect = [x: number, y: number, w: number, h: number];
 
@@ -99,4 +99,30 @@ test('red spell-check squiggles under dark ink are ignored', () => {
   const seg = segmentSample(buildInkMap(img), 'abc');
   assert.ok(rowMatched(seg.rows[0]));
   assert.ok(seg.rows[0].pieces.every((p) => p.x1 - p.x0 < 40), 'letters stay separate');
+});
+
+test('AI glyph boxes split touching letters and skip ruled lines', () => {
+  // "ab" written as one joined stroke (x 10..89), plus "c" apart, plus a ruled line.
+  const ink = buildInkMap(image(200, 100, [[10, 20, 80, 40], [120, 20, 30, 40], [0, 90, 200, 2]]));
+  const seg = segmentFromBoxes(ink, [{ text: 'abc', chars: [
+    { c: 'a', box: [0.05, 0.2, 0.25, 0.6] },
+    { c: 'b', box: [0.25, 0.2, 0.45, 0.6] },
+    { c: 'c', box: [0.6, 0.2, 0.75, 0.6] },
+  ] }]);
+  assert.equal(seg.error, undefined);
+  assert.deepEqual(seg.rows[0].letters, ['a', 'b', 'c']);
+  assert.ok(rowMatched(seg.rows[0]));
+  assert.ok(seg.rows[0].pieces[0].x1 < 55 && seg.rows[0].pieces[1].x0 >= 45, 'joined stroke is sliced between a and b');
+  assert.ok(seg.rows[0].pieces.every((p) => p.y1 < 85), 'ruled line ignored');
+});
+
+test('segmentWithAi falls back to glyph boxes when text segmentation cannot line up', () => {
+  const ink = buildInkMap(image(200, 100, [[10, 20, 80, 40], [120, 20, 30, 40]]));
+  const seg = segmentWithAi(ink, [{ text: 'abc', chars: [
+    { c: 'a', box: [0.05, 0.2, 0.25, 0.6] },
+    { c: 'b', box: [0.25, 0.2, 0.45, 0.6] },
+    { c: 'c', box: [0.6, 0.2, 0.75, 0.6] },
+  ] }]);
+  assert.ok(seg.rows.every(rowMatched));
+  assert.equal(seg.rows[0].letters.join(''), 'abc');
 });
