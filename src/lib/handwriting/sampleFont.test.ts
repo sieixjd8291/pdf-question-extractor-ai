@@ -139,3 +139,15 @@ test('AI boxes keep sentence word spacing and skip unsure glyphs', () => {
   assert.deepEqual(seg.rows[0].letters, ['h', 'i', 'o']);
   assert.ok(rowMatched(seg.rows[0]));
 });
+
+test('wrapped alphabet row does not steal letters from the next typed line', () => {
+  const rects: Rect[] = [];
+  for (let i = 0; i < 24; i++) rects.push([10 + i * 40, 20, 28, 40]);
+  for (let i = 0; i < 2; i++) rects.push([10 + i * 40, 100, 28, 40]);
+  for (let i = 0; i < 26; i++) rects.push([10 + i * 37, 180, 26, 40]);
+  for (let i = 0; i < 10; i++) rects.push([10 + i * 40, 260, 28, 40]);
+  const seg = segmentSample(buildInkMap(image(1000, 320, rects)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789');
+  assert.equal(seg.error, undefined);
+  assert.deepEqual(seg.rows.map((r) => r.text), ['ABCDEFGHIJKLMNOPQRSTUVWX', 'YZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789']);
+  assert.ok(seg.rows.every(rowMatched));
+});

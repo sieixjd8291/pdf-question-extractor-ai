@@ -498,24 +498,48 @@ function findLineBands(profile: Uint32Array): Band[] {
   return bands;
 }
 
-/** Number of image columns that contain ink from these components. */
-function inkCoverage(ink: InkMap, ids: number[]): number {
-  const cols = new Uint8Array(ink.width);
-  for (const id of ids) {
-    const c = ink.components[id - 1];
-    cols.fill(1, c.x0, c.x1 + 1);
-  }
-  return cols.reduce((a, b) => a + b, 0);
+export interface RowStats {
+  /** Estimated glyph count (multi-stroke marks like " … « merged). */
+  pieces: number;
+  /** Clusters separated by word-sized gaps. */
+  groups: number;
+  /** Row reaches close to the right edge of the writing, so a line can wrap after it. */
+  full: boolean;
+}
+
+function rowStats(ink: InkMap, buckets: number[][]): RowStats[] {
+  const clustered = buckets.map((ids) => clusterRow(ink, ids));
+  const all = clustered.flat();
+  const letterW = median(all.map((p) => p.x1 - p.x0 + 1)) || 1;
+  const left = Math.min(...all.map((p) => p.x0));
+  const right = Math.max(...all.map((p) => p.x1));
+  return clustered.map((pieces) => {
+    let count = 0;
+    let groups = 0;
+    let reach = -Infinity;
+    let prev: Piece | null = null;
+    for (const p of pieces) {
+      const gap = p.x0 - reach;
+      const narrow = (q: Piece) => q.x1 - q.x0 + 1 < letterW * 0.6;
+      if (!prev || !(gap < letterW * 0.35 && narrow(p) && narrow(prev))) count++;
+      if (!prev || gap > letterW * 0.6) groups++;
+      reach = Math.max(reach, p.x1);
+      prev = p;
+    }
+    const rowRight = pieces.length ? Math.max(...pieces.map((p) => p.x1)) : left;
+    return { pieces: count, groups, full: rowRight - left >= (right - left) * 0.75 };
+  });
 }
 
 /**
  * Splits the typed text into one line per row of writing, so text typed on fewer
  * lines still matches writing that wraps (e.g. an alphabet typed as one word but
- * written over two rows). Rows break between words when possible, inside a word
- * when needed, and never span a typed line break when there are enough rows.
+ * written over two rows). A typed line only continues onto the next row when the
+ * row before is full width, rows get about as many characters as they hold glyphs,
+ * and no row spans a typed line break when there are enough rows.
  */
-export function spreadText(lines: string[], weights: number[]): string[] | null {
-  const R = weights.length;
+export function spreadText(lines: string[], stats: RowStats[]): string[] | null {
+  const R = stats.length;
   const letters: string[] = [];
   const lineOf: number[] = [];
   const spaceBefore: boolean[] = [];
@@ -524,7 +548,7 @@ export function spreadText(lines: string[], weights: number[]): string[] | null 
     line.split(/\s+/).filter(Boolean).forEach((word, wi) => {
       Array.from(word).forEach((ch, ci) => {
         spaceBefore.push(ci === 0 && wi > 0);
-        breakCost.push(ci > 0 ? 0.003 : wi > 0 ? 0.0005 : 0);
+        breakCost.push(ci > 0 ? 0.3 : wi > 0 ? 0.05 : 0);
         letters.push(ch);
         lineOf.push(li);
       });
@@ -532,8 +556,17 @@ export function spreadText(lines: string[], weights: number[]): string[] | null 
   });
   const N = letters.length;
   if (N < R) return null;
+  const wordStarts = [0];
+  letters.forEach((_, i) => wordStarts.push(wordStarts[i] + (i === 0 || spaceBefore[i] || lineOf[i] !== lineOf[i - 1] ? 1 : 0)));
   const keepLines = lines.length <= R;
-  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
+  const rowCost = (r: number, start: number, end: number) => {
+    const { pieces, groups } = stats[r];
+    const n = end - start;
+    const words = wordStarts[end] - wordStarts[start] + (spaceBefore[start] || start === 0 || lineOf[start] !== lineOf[start - 1] ? 0 : 1);
+    const byLetters = (n - pieces) ** 2 / (pieces + 2);
+    const byWords = words > 1 ? (words - groups) ** 2 / (groups + 2) : Infinity;
+    return Math.min(byLetters, byWords);
+  };
   const cost: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(Infinity));
   const from: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(-1));
   cost[0][0] = 0;
@@ -543,7 +576,9 @@ export function spreadText(lines: string[], weights: number[]): string[] | null 
         const prev = cost[r - 1][start];
         if (prev === Infinity) continue;
         if (keepLines && lineOf[start] !== lineOf[end - 1]) continue;
-        const c = prev + ((end - start) / N - weights[r - 1] / totalWeight) ** 2 + (r > 1 ? breakCost[start] : 0);
+        const continues = start > 0 && lineOf[start] === lineOf[start - 1];
+        const wrap = continues ? breakCost[start] + (stats[r - 2]?.full ? 0 : 3) : 0;
+        const c = prev + rowCost(r - 1, start, end) + wrap;
         if (c < cost[r][end]) {
           cost[r][end] = c;
           from[r][end] = start;
@@ -600,14 +635,7 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
   }
 
   if (lines.length < bands.length) {
-    // Weigh rows by how many glyph pieces they hold (close to their letter count
-    // for print), blended with ink width so joined writing still counts.
-    const pieceCounts = buckets.map((ids) => clusterRow(ink, ids).length);
-    const coverage = buckets.map((ids) => inkCoverage(ink, ids));
-    const pieceTotal = pieceCounts.reduce((a, b) => a + b, 0) || 1;
-    const coverTotal = coverage.reduce((a, b) => a + b, 0) || 1;
-    const weights = pieceCounts.map((p, i) => 0.7 * (p / pieceTotal) + 0.3 * (coverage[i] / coverTotal));
-    const spread = spreadText(lines, weights);
+    const spread = spreadText(lines, rowStats(ink, buckets));
     if (!spread) {
       return {
         rows: [],
@@ -745,20 +773,21 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
 }
 
 /**
- * Picks the best glyph cut-out for an AI reading: ink-driven segmentation of the
- * AI text when every row lines up exactly (cleanest for print), otherwise the
- * AI's per-character boxes (handles touching letters and uneven spacing).
+ * Picks the best glyph cut-out for an AI reading. The AI's per-character boxes
+ * win whenever they cover nearly every character: they say which ink is which
+ * letter, so equal counts can't hide a shifted row. Text-only segmentation is
+ * the fallback when boxes are missing or sparse.
  */
 export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
   const text = aiLines.map((l) => l.text).filter(Boolean).join('\n');
-  const byText = segmentSample(ink, text);
   const expected = lettersOf(text).length;
-  if (!byText.error && byText.rows.length && byText.rows.every(rowMatched)) return { ...byText, text, source: 'text' };
   const byBoxes = segmentFromBoxes(ink, aiLines);
   const found = byBoxes.rows.reduce((n, r) => n + r.letters.length, 0);
-  if (!byBoxes.error && found >= expected * 0.5) {
-    return { ...byBoxes, text: byBoxes.rows.map((r) => r.text).join('\n'), source: 'boxes' };
-  }
+  const boxes = () => ({ ...byBoxes, text: byBoxes.rows.map((r) => r.text).join('\n'), source: 'boxes' as const });
+  if (!byBoxes.error && found >= expected * 0.85) return boxes();
+  const byText = segmentSample(ink, text);
+  if (!byText.error && byText.rows.length && byText.rows.every(rowMatched)) return { ...byText, text, source: 'text' };
+  if (!byBoxes.error && found >= expected * 0.5) return boxes();
   return { ...byText, text, source: 'text' };
 }
 
