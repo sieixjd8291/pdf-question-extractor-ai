@@ -745,7 +745,10 @@ function letterSpecs(lines: string[]): LetterSpec[] {
  * glyphAlign). `keep[i] === false` letters still claim their ink, so their
  * neighbours stay clean, but are left out of the result.
  */
-function matchLetters(ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], keep?: boolean[]): Segmentation {
+function matchLetters(
+  ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], keep?: boolean[],
+  placedOut?: { letter: number; piece: Piece }[],
+): Segmentation {
   const atomPieces = rowPieces.flatMap((pieces) => [...pieces].sort((a, b) => a.x0 - b.x0));
   const feats = rowPieces.flatMap((pieces, r) => [...pieces].sort((a, b) => a.x0 - b.x0).map((p) => atomFeature(ink, p, r)));
   const ops = alignGlyphs(feats, letters);
@@ -777,6 +780,7 @@ function matchLetters(ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], 
       }
     }
   }
+  placedOut?.push(...placed);
   const rows: SampleRow[] = [];
   for (let r = 0; r < rowPieces.length; r++) {
     const mine = placed.filter((p) => p.row === r && keep?.[p.letter] !== false).sort((a, b) => a.letter - b.letter);
@@ -981,22 +985,112 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   if (!rows) return { rows: [], error: 'No handwriting was found in this image.', text, source: 'text' };
   const letters = letterSpecs(lines.map((l) => l.text.trim()));
   const keep: boolean[] = [];
-  let hinted = 0;
+  const raw: ({ cx: number; cy: number; line: number } | undefined)[] = [];
   let li = 0;
-  for (const line of lines) {
+  lines.forEach((line, lineNo) => {
     const own = lettersOf(line.text);
     const chars = aiCharFor(own, line.chars ?? []);
     own.forEach((_, i) => {
       const ch = chars[i];
-      const spec = letters[li++];
+      li++;
       keep.push(ch?.sure !== false);
-      if (!ch) return;
+      if (!ch) { raw.push(undefined); return; }
       const [x0, y0, x1, y1] = ch.box;
-      spec.hint = { cx: ((x0 + x1) / 2) * ink.width, cy: ((y0 + y1) / 2) * ink.height };
-      hinted++;
+      raw.push({ cx: ((x0 + x1) / 2) * ink.width, cy: ((y0 + y1) / 2) * ink.height, line: lineNo });
+    });
+  });
+  if (!raw.some(Boolean)) return { ...matchLetters(ink, rows, letters, keep), text, source: 'text' };
+
+  // Model boxes are often off as a whole (shifted by a letter or two, or scaled), and
+  // raw hints would then drag every letter onto its neighbour's ink. Read the ink
+  // without hints first, then fit the AI coordinates onto where letters really are.
+  const placed: { letter: number; piece: Piece }[] = [];
+  const plain = matchLetters(ink, rows, letters, keep, placed);
+  const hints = calibrateHints(raw, placed);
+  if (!hints) return { ...plain, text, source: 'text' };
+  hints.forEach((h, i) => { if (h) letters[i].hint = h; });
+  return { ...matchLetters(ink, rows, letters, keep), text, source: 'boxes' };
+}
+
+/** Least-squares line through points, or null when x has no spread. */
+function fitLine(pts: [number, number][]): { a: number; b: number } | null {
+  const n = pts.length;
+  if (n < 2) return null;
+  const mx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const my = pts.reduce((s, p) => s + p[1], 0) / n;
+  let sxx = 0;
+  let sxy = 0;
+  for (const [x, y] of pts) { sxx += (x - mx) ** 2; sxy += (x - mx) * (y - my); }
+  if (sxx < 1e-6) return { a: 1, b: my - mx };
+  return { a: sxy / sxx, b: my - (sxy / sxx) * mx };
+}
+
+/**
+ * Robust 1-D map from AI coordinate to ink coordinate. Candidate maps come from
+ * pairs of points (plus pure offsets); the one most points agree with within
+ * `tol` wins and is refit on its agreeing points, so a few misread letters
+ * can't bend it.
+ */
+function robustMap(pts: [number, number][], tol: number): { a: number; b: number; inliers: boolean[] } | null {
+  if (pts.length < 3) return null;
+  const score = (a: number, b: number) => pts.reduce((n, [x, y]) => n + (Math.abs(a * x + b - y) <= tol ? 1 : 0), 0);
+  let best = { a: 1, b: 0, n: -1 };
+  const step = Math.max(1, Math.floor(pts.length / 40));
+  for (let i = 0; i < pts.length; i += step) {
+    const off = { a: 1, b: pts[i][1] - pts[i][0] };
+    const no = score(off.a, off.b);
+    if (no > best.n) best = { ...off, n: no };
+    for (let j = i + step; j < pts.length; j += step) {
+      const dx = pts[j][0] - pts[i][0];
+      if (Math.abs(dx) < tol * 4) continue;
+      const a = (pts[j][1] - pts[i][1]) / dx;
+      if (a < 0.6 || a > 1.6) continue;
+      const b = pts[i][1] - a * pts[i][0];
+      const n = score(a, b);
+      if (n > best.n) best = { a, b, n };
+    }
+  }
+  const inliers = pts.map(([x, y]) => Math.abs(best.a * x + best.b - y) <= tol);
+  const fit = fitLine(pts.filter((_, i) => inliers[i])) ?? best;
+  if (fit.a < 0.6 || fit.a > 1.6) return null;
+  return { a: fit.a, b: fit.b, inliers: pts.map(([x, y]) => Math.abs(fit.a * x + fit.b - y) <= tol) };
+}
+
+/**
+ * Moves AI hint points onto the ink using letters already placed by the ink alone.
+ * Returns null when the AI coordinates don't agree with the ink well enough to help.
+ */
+function calibrateHints(
+  raw: ({ cx: number; cy: number; line: number } | undefined)[],
+  placed: { letter: number; piece: Piece }[],
+): ({ cx: number; cy: number } | undefined)[] | null {
+  const pairs = placed.flatMap((p) => {
+    const h = raw[p.letter];
+    return h ? [{ h, x: (p.piece.x0 + p.piece.x1) / 2, y: (p.piece.y0 + p.piece.y1) / 2, height: p.piece.y1 - p.piece.y0 + 1 }] : [];
+  });
+  if (pairs.length < 3) return null;
+  const size = median(pairs.map((p) => p.height)) || 1;
+  const tol = size * 0.35;
+  const mx = robustMap(pairs.map((p) => [p.h.cx, p.x]), tol);
+  const my = robustMap(pairs.map((p) => [p.h.cy, p.y]), tol * 1.5);
+  if (!mx || !my) return null;
+  const agree = pairs.filter((_, i) => mx.inliers[i] && my.inliers[i]).length;
+  if (agree < pairs.length * 0.6) return null;
+  // Per line, a leftover offset (a line the model drew a bit higher or further right).
+  const lineOff = new Map<number, { dx: number; dy: number }>();
+  for (const line of new Set(pairs.map((p) => p.h.line))) {
+    const mine = pairs.filter((p, i) => p.h.line === line && mx.inliers[i] && my.inliers[i]);
+    if (mine.length < 3) continue;
+    lineOff.set(line, {
+      dx: median(mine.map((p) => p.x - (mx.a * p.h.cx + mx.b))),
+      dy: median(mine.map((p) => p.y - (my.a * p.h.cy + my.b))),
     });
   }
-  return { ...matchLetters(ink, rows, letters, keep), text, source: hinted ? 'boxes' : 'text' };
+  return raw.map((h) => {
+    if (!h) return undefined;
+    const off = lineOff.get(h.line) ?? { dx: 0, dy: 0 };
+    return { cx: mx.a * h.cx + mx.b + off.dx, cy: my.a * h.cy + my.b + off.dy };
+  });
 }
 
 export function rowMatched(row: SampleRow) {
