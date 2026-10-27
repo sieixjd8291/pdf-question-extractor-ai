@@ -540,15 +540,6 @@ function matchLetters(ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], 
   const atomPieces = rowPieces.flatMap((pieces) => [...pieces].sort((a, b) => a.x0 - b.x0));
   const feats = rowPieces.flatMap((pieces, r) => [...pieces].sort((a, b) => a.x0 - b.x0).map((p) => atomFeature(ink, p, r)));
   const ops = alignGlyphs(feats, letters);
-  if ((globalThis as { __v0debug?: string }).__v0debug) {
-    const range = (globalThis as { __v0debug?: string }).__v0debug!.split(',').map(Number);
-    for (const op of ops) {
-      const at = op.kind === 'skipLetter' ? null : op.kind === 'skipAtom' ? [op.atom] : op.atoms;
-      if (at && feats[at[0]].x0 >= range[0] && feats[at[0]].x0 <= range[1] && feats[at[0]].row === range[2]) {
-        console.log('[v0]', op.kind, 'letters' in op ? op.letters.map((l) => letters[l].c).join('') : 'letter' in op ? letters[op.letter].c : '', at.map((a) => `${feats[a].x0}-${feats[a].x1}:${feats[a].y0}-${feats[a].y1}/${feats[a].area}`).join(' '));
-      }
-    }
-  }
   const placed: { row: number; letter: number; piece: Piece }[] = [];
   const missing: string[] = [];
   for (const op of ops) {
@@ -590,6 +581,13 @@ function matchLetters(ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], 
     rows.push({ text, letters: mine.map((p) => letters[p.letter].c), pieces: mine.map((p) => p.piece) });
   }
   if (!rows.length) return { rows: [], error: 'None of the text could be matched to the writing. Check the text matches the image.' };
+  if (letters.length > 1 && missing.length * 2 >= letters.length) {
+    return {
+      rows,
+      missing,
+      error: `Only ${letters.length - missing.length} of ${letters.length} characters were found in the writing. Check that each typed line matches a line in the image.`,
+    };
+  }
   return { rows, ...(missing.length ? { missing } : {}) };
 }
 

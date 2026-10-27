@@ -1,3 +1,6 @@
+// Accuracy benchmark for glyph segmentation: renders text in handwriting fonts
+// from /tmp/hw/fonts/<name>.ttf and scores each cut-out glyph against the truth.
+// Usage: MODE=text|boxes|ai [FONTS=a,b] [ONLY=name] [PARA=1] [VERBOSE=1] npx tsx scripts/bench-handwriting.mts
 import sharp from 'sharp';
 import fs from 'node:fs';
 import opentype from 'opentype.js';
@@ -143,7 +146,6 @@ function fakeAi(truth: Truth[], sc: Scenario, W: number, H: number, seed: number
   }));
 }
 
-(globalThis as any).__v0debug = process.env.DBG;
 const mode = process.env.MODE ?? 'text';
 const totals = { ok: 0, total: 0, wrong: 0 };
 const per: Record<string, { ok: number; total: number }> = {};
