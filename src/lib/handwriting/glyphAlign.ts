@@ -239,6 +239,8 @@ function runDp(
           if (a.row !== atoms[i].row) break;
           const gap = (a.x0 - box.x1) / s;
           if (gap > 1.5) break;
+          // A mark floating far above or below is a stray tick, never part of this glyph.
+          if (Math.max(a.y0 - box.y1, box.y0 - a.y1) > 0.6 * s) break;
           gapCost += 1.0 * Math.max(0, gap - 0.25);
           box = { x0: Math.min(box.x0, a.x0), x1: Math.max(box.x1, a.x1), y0: Math.min(box.y0, a.y0), y1: Math.max(box.y1, a.y1) };
           area += a.area;

@@ -99,11 +99,45 @@ async function render(fontName: string, sc: Scenario, seed: number) {
   const H = Math.ceil(30 + size + (sc.image.length - 1) * lineH + size * 0.9);
   // Red spell-check squiggle under the lowercase row, like the user's sample.
   const squiggle = `<path d="M30 ${50 + size + lineH * 2} ${Array.from({ length: 80 }, (_, i) => `L${30 + i * 8} ${50 + size + lineH * 2 + (i % 2 ? 3 : -3)}`).join(' ')}" stroke="#e33" stroke-width="2" fill="none"/>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect width="100%" height="100%" fill="#f6f3ec"/>${sc.name.startsWith('user') ? squiggle : ''}${paths}</svg>`;
-  const { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  if (process.env.SAVE) await sharp(Buffer.from(svg)).png().toFile(`/tmp/hw/${fontName}-${sc.name}.png`);
+  // Notebook ruling under each baseline and a red margin, as in a photographed page.
+  const ruling = PHOTO
+    ? sc.image.map((_, li) => `<line x1="0" x2="${W}" y1="${30 + size + li * lineH + size * 0.12}" y2="${30 + size + li * lineH + size * 0.12}" stroke="#9cb6dd" stroke-width="2"/>`).join('') +
+      `<line x1="18" x2="18" y1="0" y2="${H}" stroke="#e88" stroke-width="2"/>`
+    : '';
+  const inkColor = PHOTO ? '#1d2548' : '#1a1a1a';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect width="100%" height="100%" fill="#f6f3ec"/>${ruling}${sc.name.startsWith('user') ? squiggle : ''}${paths.replaceAll('#1a1a1a', inkColor)}</svg>`;
+  let { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (PHOTO) data = await photograph(data, info.width, info.height, seed);
+  if (process.env.SAVE) await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toFile(`/tmp/hw/${fontName}-${sc.name}.png`);
   const img = { width: info.width, height: info.height, data: new Uint8ClampedArray(data), colorSpace: 'srgb' } as ImageData;
   return { img, truth, W: info.width, H: info.height };
+}
+
+const PHOTO = !!process.env.PHOTO;
+
+/** Uneven light, a shadow across the page, warm tint, sensor noise, a desk edge, blur and JPEG. */
+async function photograph(src: Buffer, w: number, h: number, seed: number): Promise<Buffer> {
+  const rand = rng(seed * 7 + 3);
+  const out = Buffer.from(src);
+  const angle = rand() * Math.PI * 2;
+  const [sx, sy] = [Math.cos(angle), Math.sin(angle)];
+  const diag = Math.hypot(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const along = ((x - w / 2) * sx + (y - h / 2) * sy) / diag + 0.5;
+      const vignette = 1 - 0.35 * (((x - w / 2) / w) ** 2 + ((y - h / 2) / h) ** 2) * 2;
+      const shadow = 0.55 + 0.45 * Math.min(1, Math.max(0, along * 1.4 - 0.1));
+      let light = vignette * shadow;
+      if (y < 14) light *= 0.25;
+      const noise = (rand() + rand() + rand() - 1.5) * 18;
+      out[i] = Math.max(0, Math.min(255, out[i] * light * 1.0 + noise));
+      out[i + 1] = Math.max(0, Math.min(255, out[i + 1] * light * 0.96 + noise));
+      out[i + 2] = Math.max(0, Math.min(255, out[i + 2] * light * 0.88 + noise));
+    }
+  }
+  const jpg = await sharp(out, { raw: { width: w, height: h, channels: 4 } }).blur(0.7).jpeg({ quality: 72 }).toBuffer();
+  return (await sharp(jpg).ensureAlpha().raw().toBuffer({ resolveWithObject: true })).data;
 }
 
 function score(seg: Segmentation, truth: Truth[]) {
