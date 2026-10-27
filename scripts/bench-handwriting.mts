@@ -102,7 +102,16 @@ async function render(fontName: string, sc: Scenario, seed: number) {
   // Notebook ruling under each baseline and a red margin, as in a photographed page.
   const ruling = PHOTO
     ? sc.image.map((_, li) => `<line x1="0" x2="${W}" y1="${30 + size + li * lineH + size * 0.12}" y2="${30 + size + li * lineH + size * 0.12}" stroke="#9cb6dd" stroke-width="2"/>`).join('') +
-      `<line x1="18" x2="18" y1="0" y2="${H}" stroke="#e88" stroke-width="2"/>`
+      `<line x1="18" x2="18" y1="0" y2="${H}" stroke="#e88" stroke-width="2"/>` +
+      // Stray pen ticks in the gap above each line, over a random letter.
+      sc.image.map((_, li) => {
+        const line = truth.filter((t) => t.line === li);
+        const t = line[Math.floor(rand() * line.length)];
+        if (!t) return '';
+        const x = (t.box[0] + t.box[2]) / 2;
+        const y = 30 + size + li * lineH - size * 1.02;
+        return `<path d="M${x} ${y} l${size * 0.05} ${-size * 0.1}" stroke="#1a1a1a" stroke-width="${Math.max(2, size * 0.05)}" stroke-linecap="round"/>`;
+      }).join('')
     : '';
   const inkColor = PHOTO ? '#1d2548' : '#1a1a1a';
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect width="100%" height="100%" fill="#f6f3ec"/>${ruling}${sc.name.startsWith('user') ? squiggle : ''}${paths.replaceAll('#1a1a1a', inkColor)}</svg>`;

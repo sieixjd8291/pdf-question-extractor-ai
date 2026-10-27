@@ -182,6 +182,9 @@ function runDp(
     const l = letters[j];
     if (rowLead[i]) return l.lineStart ? 0 : l.spaceBefore ? 0.4 : 1.0;
     let c = l.lineStart ? 2.5 : 0;
+    // A mark lying entirely over ink already used (a tick above a joined word) can't
+    // start the next letter; it is either part of that ink or a stray.
+    if (atoms[i].x1 <= reach[i]) c += 2.5;
     const g = (atoms[i].x0 - reach[i]) / s;
     if (l.spaceBefore || l.lineStart) c += 1.2 * Math.max(0, 0.45 - g);
     else c += 0.5 * Math.max(0, g - 1.2);
@@ -240,7 +243,9 @@ function runDp(
           const gap = (a.x0 - box.x1) / s;
           if (gap > 1.5) break;
           // A mark floating far above or below is a stray tick, never part of this glyph.
-          if (Math.max(a.y0 - box.y1, box.y0 - a.y1) > 0.6 * s) break;
+          let near = Infinity;
+          for (let t = i; t < i + n - 1; t++) near = Math.min(near, verticalGap(atoms[t], a));
+          if (near > 0.6 * s) break;
           gapCost += 1.0 * Math.max(0, gap - 0.25);
           box = { x0: Math.min(box.x0, a.x0), x1: Math.max(box.x1, a.x1), y0: Math.min(box.y0, a.y0), y1: Math.max(box.y1, a.y1) };
           area += a.area;
@@ -249,7 +254,8 @@ function runDp(
         groups.push({ n, box, gapCost, areas, area });
       }
     }
-    const overlapping = i + 1 < K && atoms[i + 1].row === atoms[i].row && atoms[i + 1].x0 - atoms[i].x1 <= 0.3 * s;
+    const overlapping = i + 1 < K && atoms[i + 1].row === atoms[i].row && atoms[i + 1].x0 - atoms[i].x1 <= 0.3 * s &&
+      verticalGap(atoms[i], atoms[i + 1]) <= 0.6 * s;
 
     for (let j = jFrom; j <= jTo; j++) {
       const here = cost[i * S + j];
@@ -328,6 +334,37 @@ function runDp(
     } else break;
   }
   return ops.reverse();
+}
+
+/**
+ * Vertical distance between the ink of two atoms where they share columns, so a
+ * mark above the low part of a joined word isn't measured against its tall
+ * ascender. Atoms side by side fall back to their boxes.
+ */
+function verticalGap(a: AtomFeat, b: AtomFeat): number {
+  const from = Math.max(a.x0, b.x0);
+  const to = Math.min(a.x1, b.x1);
+  let gap = Infinity;
+  for (let x = from; x <= to; x++) {
+    const ia = x - a.x0;
+    const ib = x - b.x0;
+    if (!a.cols[ia] || !b.cols[ib]) continue;
+    gap = Math.min(gap, Math.max(0, b.colTop[ib] - a.colBot[ia], a.colTop[ia] - b.colBot[ib]));
+  }
+  if (gap === Infinity) {
+    // Overlapping columns without shared ink: nearest ink of each within the overlap.
+    let aTop = Infinity, aBot = -Infinity, bTop = Infinity, bBot = -Infinity;
+    for (let x = from; x <= to; x++) {
+      const ia = x - a.x0;
+      const ib = x - b.x0;
+      if (a.cols[ia]) { aTop = Math.min(aTop, a.colTop[ia]); aBot = Math.max(aBot, a.colBot[ia]); }
+      if (b.cols[ib]) { bTop = Math.min(bTop, b.colTop[ib]); bBot = Math.max(bBot, b.colBot[ib]); }
+    }
+    gap = aTop === Infinity || bTop === Infinity
+      ? Math.max(0, b.y0 - a.y1, a.y0 - b.y1)
+      : Math.max(0, bTop - aBot, aTop - bBot);
+  }
+  return gap;
 }
 
 /** Column profile of several atoms taken together. */
