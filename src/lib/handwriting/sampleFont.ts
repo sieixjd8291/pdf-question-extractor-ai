@@ -43,6 +43,8 @@ export interface Segmentation {
 }
 
 const MIN_COMPONENT_AREA = 3;
+/** After flattening, paper sits near 255; anything this bright is paper even if Otsu says ink. */
+const PAPER_CUTOFF = 205;
 const UNITS_PER_EM = 1000;
 const X_HEIGHT_UNITS = 500;
 const CAP_HEIGHT_UNITS = 700;
@@ -80,30 +82,142 @@ function otsuThreshold(hist: Uint32Array, total: number): number {
   return Math.min(220, Math.max(40, threshold));
 }
 
+/** Separable sliding-window max over a w x h grid. */
+function maxFilter(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let m = 0;
+      for (let t = Math.max(0, x - r); t <= Math.min(w - 1, x + r); t++) m = Math.max(m, src[y * w + t]);
+      tmp[y * w + x] = m;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let m = 0;
+      for (let t = Math.max(0, y - r); t <= Math.min(h - 1, y + r); t++) m = Math.max(m, tmp[t * w + x]);
+      out[y * w + x] = m;
+    }
+  }
+  return out;
+}
+
+/**
+ * Divides out the paper's own brightness so a phone photo's shading, shadows and
+ * tint all become flat white. The paper level is the brightest value around each
+ * spot (on a coarse grid wider than any pen stroke), smoothed, then interpolated.
+ */
+function flattenBackground(gray: Uint8Array, w: number, h: number): void {
+  const longest = Math.max(w, h);
+  if (longest < 64) return;
+  const cell = Math.max(4, Math.round(longest / 150));
+  const gw = Math.ceil(w / cell);
+  const gh = Math.ceil(h / cell);
+  // 95th-percentile brightness of each cell, so a speck of glare doesn't count as paper.
+  const grid = new Float32Array(gw * gh);
+  const hist = new Uint16Array(256);
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      hist.fill(0);
+      let count = 0;
+      for (let y = gy * cell; y < Math.min(h, (gy + 1) * cell); y++) {
+        for (let x = gx * cell; x < Math.min(w, (gx + 1) * cell); x++) { hist[gray[y * w + x]]++; count++; }
+      }
+      let seen = 0;
+      let v = 255;
+      for (; v > 0; v--) { seen += hist[v]; if (seen >= count * 0.05) break; }
+      grid[gy * gw + gx] = v;
+    }
+  }
+  const sortedCells = Array.from(grid).sort((a, b) => a - b);
+  const floor = Math.max(16, sortedCells[Math.floor(sortedCells.length * 0.9)] * 0.4);
+  // Wide enough to see past the thickest strokes and letter bowls to the paper.
+  let bg = maxFilter(grid, gw, gh, 3);
+  for (let pass = 0; pass < 2; pass++) {
+    const blurred = new Float32Array(gw * gh);
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        let s = 0;
+        let c = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          const yy = y + dy;
+          if (yy < 0 || yy >= gh) continue;
+          for (let dx = -2; dx <= 2; dx++) {
+            const xx = x + dx;
+            if (xx < 0 || xx >= gw) continue;
+            s += bg[yy * gw + xx];
+            c++;
+          }
+        }
+        blurred[y * gw + x] = s / c;
+      }
+    }
+    bg = blurred;
+  }
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(gh - 1, Math.max(0, (y + 0.5) / cell - 0.5));
+    const y0 = Math.floor(fy);
+    const y1 = Math.min(gh - 1, y0 + 1);
+    const ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(gw - 1, Math.max(0, (x + 0.5) / cell - 0.5));
+      const x0 = Math.floor(fx);
+      const x1 = Math.min(gw - 1, x0 + 1);
+      const tx = fx - x0;
+      const top = bg[y0 * gw + x0] * (1 - tx) + bg[y0 * gw + x1] * tx;
+      const bot = bg[y1 * gw + x0] * (1 - tx) + bg[y1 * gw + x1] * tx;
+      // Floor at a share of the page's paper so a wide solid ink area isn't taken for paper;
+      // anything darker (a desk) stays dark and is dropped later as an edge blob.
+      const paper = Math.max(floor, top * (1 - ty) + bot * ty);
+      const i = y * w + x;
+      gray[i] = Math.min(255, Math.round((gray[i] * 255) / paper));
+    }
+  }
+}
+
+/** Median length of horizontal ink runs: the pen's stroke width in pixels. */
+function strokeWidth(labels: Int32Array, w: number, h: number): number {
+  const runs = new Uint32Array(64);
+  let total = 0;
+  for (let y = 0; y < h; y += 2) {
+    let run = 0;
+    for (let x = 0; x <= w; x++) {
+      if (x < w && labels[y * w + x] === -1) { run++; continue; }
+      if (run) { runs[Math.min(63, run)]++; total++; run = 0; }
+    }
+  }
+  if (!total) return 1;
+  let seen = 0;
+  for (let r = 1; r < 64; r++) { seen += runs[r]; if (seen * 2 >= total) return r; }
+  return 63;
+}
+
 export function buildInkMap(img: ImageData): InkMap {
   const { width: w, height: h, data } = img;
   const n = w * h;
   const gray = new Uint8Array(n);
   const chroma = new Uint8Array(n);
   const hueBin = new Uint8Array(n);
-  let hist = new Uint32Array(256);
   for (let i = 0; i < n; i++) {
     const a = data[i * 4 + 3] / 255;
     const r = data[i * 4] * a + 255 * (1 - a);
     const g = data[i * 4 + 1] * a + 255 * (1 - a);
     const b = data[i * 4 + 2] * a + 255 * (1 - a);
-    const v = (r * 0.299 + g * 0.587 + b * 0.114) | 0;
-    gray[i] = v;
-    hist[v]++;
+    gray[i] = (r * 0.299 + g * 0.587 + b * 0.114) | 0;
     const max = Math.max(r, g, b);
     const c = max - Math.min(r, g, b);
-    chroma[i] = c;
+    // Chroma relative to brightness, so colors survive in a dim corner of a photo.
+    chroma[i] = max > 0 ? Math.min(255, Math.round((c * 255) / Math.max(max, 128))) : 0;
     if (c > 0) {
       const hue = max === r ? ((g - b) / c + 6) % 6 : max === g ? (b - r) / c + 2 : (r - g) / c + 4;
       hueBin[i] = Math.min(35, (hue * 6) | 0);
     }
   }
-  let threshold = otsuThreshold(hist, n);
+  flattenBackground(gray, w, h);
+  let hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) hist[gray[i]]++;
+  let threshold = Math.min(PAPER_CUTOFF, otsuThreshold(hist, n));
 
   // Drop colored marks that are not the pen (red spell-check squiggles, highlighter,
   // colored ruling): with dark ink every strongly colored pixel goes; with colored
@@ -130,17 +244,18 @@ export function buildInkMap(img: ImageData): InkMap {
       if (chroma[i] >= COLORED && (!coloredPen || offHue(hueBin[i]))) gray[i] = 255;
       hist[gray[i]]++;
     }
-    threshold = otsuThreshold(hist, n);
+    threshold = Math.min(PAPER_CUTOFF, otsuThreshold(hist, n));
   }
 
   const labels = new Int32Array(n);
   for (let i = 0; i < n; i++) if (gray[i] <= threshold) labels[i] = -1;
+  const pen = strokeWidth(labels, w, h);
 
-  const components: InkComponent[] = [];
+  const found: InkComponent[] = [];
   const stack = new Int32Array(n);
   for (let start = 0; start < n; start++) {
     if (labels[start] !== -1) continue;
-    const id = components.length + 1;
+    const id = found.length + 1;
     const comp: InkComponent = { x0: w, x1: 0, y0: h, y1: 0, area: 0 };
     let sp = 0;
     stack[sp++] = start;
@@ -168,8 +283,25 @@ export function buildInkMap(img: ImageData): InkMap {
         }
       }
     }
-    components.push(comp);
+    found.push(comp);
   }
+
+  // Photo noise, paper grain and JPEG specks are far smaller than a pen dot; page
+  // edges, desk and shadow blobs are large, solid and touch the border.
+  const minArea = Math.max(MIN_COMPONENT_AREA, Math.round(Math.min(pen * pen * 0.5, (Math.max(w, h) / 100) ** 2)));
+  const keep = new Int32Array(found.length + 1);
+  const components: InkComponent[] = [];
+  found.forEach((c, i) => {
+    const bw = c.x1 - c.x0 + 1;
+    const bh = c.y1 - c.y0 + 1;
+    const touchesEdge = c.x0 === 0 || c.y0 === 0 || c.x1 === w - 1 || c.y1 === h - 1;
+    const solid = c.area > bw * bh * 0.5 && bw > pen * 12 && bh > pen * 12;
+    const edgeBlob = touchesEdge && (bw > w * 0.3 || bh > h * 0.3) && c.area > bw * bh * 0.35;
+    if (c.area < minArea || solid || edgeBlob) return;
+    components.push(c);
+    keep[i + 1] = components.length;
+  });
+  if (components.length !== found.length) for (let i = 0; i < n; i++) if (labels[i]) labels[i] = keep[labels[i]];
   return { width: w, height: h, labels, components };
 }
 
@@ -266,6 +398,7 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
   if (pieces.length < 2) return pieces;
   const areaMedian = median(pieces.map((p) => p.area));
   const widthMedian = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
+  const heightMedian = median(pieces.map((p) => p.y1 - p.y0 + 1)) || 1;
   // A text with apostrophes or quotes has real standalone high marks, so only
   // attach marks that actually overlap a letter horizontally.
   const maxGap = HIGH_MARK_CHARS.test(text) ? 0 : widthMedian * 0.35;
@@ -281,6 +414,8 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
       if (j === i || q.area < p.area * 1.8) continue;
       const qh = q.y1 - q.y0 + 1;
       if (p.y1 > q.y0 + qh * 0.35) continue;
+      // An i dot floats just above its stem; a mark far higher is a stray pen tick.
+      if (q.y0 - p.y1 > Math.max(qh, heightMedian) * 0.9) continue;
       const gap = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1));
       // Among touching candidates, the one most directly below the mark wins.
       const overlap = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) + 1) / (p.x1 - p.x0 + 1);
@@ -303,6 +438,7 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
 export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideBySide = false): Piece[] {
   const comps = compIds.map((id) => ({ id, c: ink.components[id - 1] })).sort((p, q) => p.c.x0 - q.c.x0);
   const parent = comps.map((_, i) => i);
+  const rowHeight = median(comps.map((p) => p.c.y1 - p.c.y0 + 1));
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (let i = 0; i < comps.length; i++) {
     const a = comps[i].c;
@@ -316,6 +452,8 @@ export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideB
       // matcher decides whether they belong together.
       const vOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
       const shorter = Math.min(a.y1 - a.y0, b.y1 - b.y0) + 1;
+      const taller = Math.max(a.y1 - a.y0 + 1, b.y1 - b.y0 + 1, rowHeight);
+      if (-vOverlap > taller * 0.9) continue;
       if (overlap > narrower * 0.5 && (!splitSideBySide || vOverlap < shorter * 0.4)) parent[find(j)] = find(i);
     }
   }
@@ -409,7 +547,7 @@ function splitBand(ink: InkMap, isInk: Uint8Array, band: Band, density: Float64A
  * descenders touch are split at the sparse gap between them; thin bands (i dots
  * and accents floating above a line) are folded into their nearest line.
  */
-function findLineBands(ink: InkMap, valid: number[], centroid: Float64Array): Band[] {
+function findLineBands(ink: InkMap, valid: number[], centroid: Float64Array, typedLines: number): Band[] {
   const { width: W, height: H, labels } = ink;
   const isInk = new Uint8Array(ink.components.length + 1);
   for (const id of valid) isInk[id] = 1;
@@ -440,18 +578,45 @@ function findLineBands(ink: InkMap, valid: number[], centroid: Float64Array): Ba
     spans.push({ y0, y1: y - 1 });
   }
   const bands = spans.flatMap((b) => splitBand(ink, isInk, b, density, centroid));
+  return foldMarkBands(bands, raw, typedLines);
+}
+
+/**
+ * Folds bands that hold only stray marks (i dots, accents, a pen tick) into the
+ * nearest line. Each band is judged against the typical line, measured once, so
+ * a short line of digits or capitals is never folded just because a neighbour
+ * grew taller by absorbing something else.
+ */
+function foldMarkBands(bands: Band[], raw: Float64Array, typedLines: number): Band[] {
+  if (bands.length < 2) return bands;
   const height = (b: Band) => b.y1 - b.y0 + 1;
-  while (bands.length > 1) {
-    const tallest = Math.max(...bands.map(height));
-    const thin = bands.findIndex((b) => height(b) < tallest * 0.4);
-    if (thin < 0) break;
-    const above = thin > 0 ? bands[thin].y0 - bands[thin - 1].y1 : Infinity;
-    const below = thin < bands.length - 1 ? bands[thin + 1].y0 - bands[thin].y1 : Infinity;
-    const other = above <= below ? thin - 1 : thin + 1;
-    const lo = Math.min(thin, other);
-    bands.splice(lo, 2, { y0: bands[lo].y0, y1: bands[lo + 1].y1 });
+  const inkOf = (b: Band) => {
+    let s = 0;
+    for (let y = b.y0; y <= b.y1; y++) s += raw[y];
+    return s;
+  };
+  const maxInk = Math.max(...bands.map(inkOf));
+  const lines = bands.filter((b) => inkOf(b) >= maxInk * 0.2);
+  const lineHeight = median(lines.map(height));
+  const lineInk = median(lines.map(inkOf));
+  const isTiny = (b: Band) => height(b) < lineHeight * 0.35 && inkOf(b) < lineInk * 0.06;
+  const isMark = (b: Band) => height(b) < lineHeight * 0.5 && inkOf(b) < lineInk * 0.25;
+
+  const out = [...bands];
+  for (;;) {
+    let pick = -1;
+    for (let i = 0; i < out.length; i++) {
+      const b = out[i];
+      if (!isTiny(b) && !(out.length > typedLines && isMark(b))) continue;
+      if (pick < 0 || inkOf(b) < inkOf(out[pick])) pick = i;
+    }
+    if (pick < 0 || out.length < 2) break;
+    const above = pick > 0 ? out[pick].y0 - out[pick - 1].y1 : Infinity;
+    const below = pick < out.length - 1 ? out[pick + 1].y0 - out[pick].y1 : Infinity;
+    const lo = Math.min(pick, above <= below ? pick - 1 : pick + 1);
+    out.splice(lo, 2, { y0: out[lo].y0, y1: out[lo + 1].y1 });
   }
-  return bands;
+  return out;
 }
 
 /** Rows of writing, each as left-to-right ink clusters (letters, or parts of one). */
@@ -473,7 +638,8 @@ function inkRows(ink: InkMap, text: string): Piece[][] | null {
     }
     centroid[id] = n ? sum / n : (c.y0 + c.y1) / 2;
   }
-  const bands = findLineBands(ink, valid, centroid);
+  const typedLines = Math.max(1, text.split('\n').filter((l) => l.trim()).length);
+  const bands = findLineBands(ink, valid, centroid, typedLines);
   const buckets: number[][] = bands.map(() => []);
   for (const id of valid) {
     const cy = centroid[id];

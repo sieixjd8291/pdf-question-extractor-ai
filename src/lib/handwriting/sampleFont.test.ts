@@ -173,3 +173,43 @@ test('a row of capitals with dense top and bottom bars stays one line', () => {
   assert.equal(seg.rows.length, 1);
   assert.ok(rowMatched(seg.rows[0]));
 });
+
+test('short rows of digits and capitals are not folded into a tall lowercase row', () => {
+  // A tall lowercase line, a stray pen tick above it, then capitals, digits and punctuation.
+  // "abc" with tall b/h-like strokes and a short c far below the tick.
+  const rects: Rect[] = [[130, 2, 3, 6], [20, 40, 30, 120], [70, 40, 30, 120], [120, 120, 30, 40]];
+  for (const x of [20, 70, 120]) rects.push([x, 200, 30, 50]);
+  for (const x of [20, 60]) rects.push([x, 290, 20, 30]);
+  rects.push([20, 360, 6, 30], [20, 394, 6, 6], [60, 370, 14, 30]);
+  const seg = segmentSample(buildInkMap(image(260, 420, rects)), 'abc\nDEF\n12\n!?');
+  assert.equal(seg.error, undefined);
+  assert.deepEqual(seg.rows.map((r) => r.text), ['abc', 'DEF', '12', '!?']);
+  assert.ok(seg.rows.every(rowMatched));
+  assert.ok(seg.rows[0].pieces.every((p) => p.y0 >= 40), 'the stray tick is not glued onto a letter');
+});
+
+test('a dot just above a short letter still joins it', () => {
+  const rects: Rect[] = [[24, 18, 6, 6], [22, 40, 8, 40], ...letterBox(50)];
+  const seg = segmentSample(buildInkMap(image(120, 100, rects)), 'io');
+  assert.ok(rowMatched(seg.rows[0]));
+  assert.ok(seg.rows[0].pieces[0].y0 <= 18, 'the i keeps its dot');
+});
+
+test('a photo with a shadow across the page still yields separate letters', () => {
+  const W = 400;
+  const H = 120;
+  const img = image(W, H, []);
+  const letters: Rect[] = [[20, 40, 8, 40], [80, 40, 8, 40], [150, 40, 30, 8], [230, 40, 8, 40], [300, 40, 30, 8], [360, 40, 8, 40]];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const paper = 250 - (x / W) * 150;
+      const inLetter = letters.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
+      const v = inLetter ? paper * 0.3 : paper;
+      const o = (y * W + x) * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+    }
+  }
+  const seg = segmentSample(buildInkMap(img), 'abcdef');
+  assert.ok(rowMatched(seg.rows[0]));
+  assert.ok(seg.rows[0].pieces.every((p) => p.x1 - p.x0 < 40), 'shaded paper is not read as ink');
+});
