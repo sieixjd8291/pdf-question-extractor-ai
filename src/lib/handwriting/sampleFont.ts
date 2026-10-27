@@ -2,9 +2,10 @@
  * Turns an image of handwriting plus the text it contains into an OpenType font.
  *
  * Pipeline: binarize (Otsu) -> connected components -> split into lines -> cluster
- * components into glyph "pieces" -> match pieces to the typed letters (word gaps,
- * then merge/split per word) -> trace each piece to vector outlines -> build OTF.
+ * components into ink "atoms" -> globally match atoms to the typed letters
+ * (glyphAlign) -> trace each glyph to vector outlines -> build OTF.
  */
+import { alignGlyphs, type AtomFeat, type LetterSpec } from './glyphAlign';
 
 export interface InkComponent { x0: number; x1: number; y0: number; y1: number; area: number }
 
@@ -37,6 +38,8 @@ export interface SampleRow {
 export interface Segmentation {
   rows: SampleRow[];
   error?: string;
+  /** Typed characters that could not be found in the writing. */
+  missing?: string[];
 }
 
 const MIN_COMPONENT_AREA = 3;
@@ -239,40 +242,6 @@ export function splitPiece(ink: InkMap, piece: Piece): [Piece, Piece] | null {
   return cutPiece(ink, piece, piece.x0 + bestCol);
 }
 
-/** Relative letter widths, so joined writing is cut where narrow and wide letters really end. */
-function letterWeight(ch: string): number {
-  if ('ijl.,:;!\'|'.includes(ch)) return 0.45;
-  if ('frtI1()[]'.includes(ch)) return 0.7;
-  if ('mwMW'.includes(ch)) return 1.5;
-  if (/[A-Z]/.test(ch)) return 1.15;
-  return 1;
-}
-
-/** Splits a piece holding several joined letters into one piece per letter. */
-function splitIntoLetters(ink: InkMap, piece: Piece, letters: string[]): Piece[] {
-  if (letters.length < 2) return [piece];
-  const width = piece.x1 - piece.x0 + 1;
-  if (width < letters.length * 2) return [piece];
-  const weights = letters.map(letterWeight);
-  const total = weights.reduce((a, b) => a + b, 0);
-  const cols = columnInk(ink, piece);
-  const out: Piece[] = [];
-  let rest = piece;
-  let acc = 0;
-  for (let i = 0; i < letters.length - 1; i++) {
-    acc += weights[i];
-    const target = (acc / total) * width;
-    const reach = ((Math.min(weights[i], weights[i + 1]) / total) * width) * 0.45;
-    const col = thinnestColumn(cols, Math.floor(target - reach), Math.ceil(target + reach), target);
-    const halves = cutPiece(ink, rest, piece.x0 + col);
-    if (!halves) continue;
-    out.push(halves[0]);
-    rest = halves[1];
-  }
-  out.push(rest);
-  return out;
-}
-
 function cutPiece(ink: InkMap, piece: Piece, cut: number): [Piece, Piece] | null {
   const left: PiecePart[] = [];
   const right: PiecePart[] = [];
@@ -313,8 +282,13 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
       const qh = q.y1 - q.y0 + 1;
       if (p.y1 > q.y0 + qh * 0.35) continue;
       const gap = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1));
-      if (gap <= maxGap && gap < bestGap) {
-        bestGap = gap;
+      // Among touching candidates, the one most directly below the mark wins.
+      const overlap = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) + 1) / (p.x1 - p.x0 + 1);
+      const centerDist = Math.abs((p.x0 + p.x1) / 2 - (q.x0 + q.x1) / 2) / ((q.x1 - q.x0 + 1) * 4)
+        // A dot beside a tall letter's top (f, l) is less likely its own than one above a stem.
+        + Math.max(0, (p.y1 - q.y0) / qh) * 2;
+      if (gap <= maxGap && gap - overlap + centerDist < bestGap) {
+        bestGap = gap - overlap + centerDist;
         best = j;
       }
     }
@@ -326,7 +300,7 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
   return out.sort((a, b) => a.x0 - b.x0);
 }
 
-export function clusterRow(ink: InkMap, compIds: number[], text = ''): Piece[] {
+export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideBySide = false): Piece[] {
   const comps = compIds.map((id) => ({ id, c: ink.components[id - 1] })).sort((p, q) => p.c.x0 - q.c.x0);
   const parent = comps.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
@@ -337,7 +311,12 @@ export function clusterRow(ink: InkMap, compIds: number[], text = ''): Piece[] {
       if (b.x0 > a.x1) break;
       const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
       const narrower = Math.min(a.x1 - a.x0, b.x1 - b.x0) + 1;
-      if (overlap > narrower * 0.5) parent[find(j)] = find(i);
+      // Only strokes stacked above each other (i dots, : ; ! ? =) are one glyph for
+      // sure; side-by-side strokes (an f bar over the next stem) stay apart and the
+      // matcher decides whether they belong together.
+      const vOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
+      const shorter = Math.min(a.y1 - a.y0, b.y1 - b.y0) + 1;
+      if (overlap > narrower * 0.5 && (!splitSideBySide || vOverlap < shorter * 0.4)) parent[find(j)] = find(i);
     }
   }
   const groups = new Map<number, PiecePart[]>();
@@ -349,125 +328,6 @@ export function clusterRow(ink: InkMap, compIds: number[], text = ''): Piece[] {
   });
   const pieces = [...groups.values()].map((parts) => measure(ink, parts)).sort((a, b) => a.x0 - b.x0);
   return attachMarks(ink, pieces, text);
-}
-
-/**
- * Gives each piece a consecutive run of letters so piece widths best match the
- * letters' expected widths, then cuts every multi-letter piece apart.
- */
-function distributeLetters(ink: InkMap, pieces: Piece[], letters: string[]): Piece[] {
-  const m = pieces.length;
-  const n = letters.length;
-  const widths = pieces.map((p) => p.x1 - p.x0 + 1);
-  const weights = letters.map(letterWeight);
-  const unit = widths.reduce((a, b) => a + b, 0) / weights.reduce((a, b) => a + b, 0);
-  const prefix = [0];
-  for (const w of weights) prefix.push(prefix[prefix.length - 1] + w);
-
-  const cost: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(Infinity));
-  const from: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(-1));
-  cost[0][0] = 0;
-  for (let i = 1; i <= m; i++) {
-    for (let j = i; j <= n - (m - i); j++) {
-      for (let s = i - 1; s < j; s++) {
-        const prev = cost[i - 1][s];
-        if (prev === Infinity) continue;
-        const expected = (prefix[j] - prefix[s]) * unit;
-        const c = prev + ((widths[i - 1] - expected) / unit) ** 2;
-        if (c < cost[i][j]) {
-          cost[i][j] = c;
-          from[i][j] = s;
-        }
-      }
-    }
-  }
-  const bounds = [n];
-  for (let i = m, j = n; i > 0; i--) {
-    j = from[i][j];
-    bounds.unshift(j);
-  }
-  return pieces.flatMap((p, i) => splitIntoLetters(ink, p, letters.slice(bounds[i], bounds[i + 1])));
-}
-
-function fitWord(ink: InkMap, group: Piece[], letters: string[]): Piece[] {
-  const count = letters.length;
-  const pieces = [...group];
-  const letterWidth = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
-  while (pieces.length > count && pieces.length > 1) {
-    let best = 0;
-    let bestCost = Infinity;
-    for (let i = 0; i < pieces.length - 1; i++) {
-      const a = pieces[i];
-      const b = pieces[i + 1];
-      // Small marks (i/j dots, accents) next to a letter are the likeliest leftovers.
-      const cost = (b.x0 - a.x1) / letterWidth + Math.min(a.area, b.area) / Math.max(a.area, b.area);
-      if (cost < bestCost) {
-        bestCost = cost;
-        best = i;
-      }
-    }
-    pieces.splice(best, 2, mergePieces(ink, pieces[best], pieces[best + 1]));
-  }
-  if (pieces.length >= count || !pieces.length) return pieces;
-  const split = distributeLetters(ink, pieces, letters);
-  let guard = 0;
-  while (split.length < count && guard++ < 400) {
-    let widest = 0;
-    for (let i = 1; i < split.length; i++) {
-      if (split[i].x1 - split[i].x0 > split[widest].x1 - split[widest].x0) widest = i;
-    }
-    const halves = splitPiece(ink, split[widest]);
-    if (!halves) break;
-    split.splice(widest, 1, ...halves);
-  }
-  return split;
-}
-
-/** Matches pieces of one line of writing to the words of one line of text. */
-function autoAssign(ink: InkMap, pieces: Piece[], text: string): Piece[] {
-  const wordLetters = text.split(/\s+/).filter(Boolean).map((w) => Array.from(w));
-  const words = wordLetters.map((w) => w.length);
-  const k = pieces.length;
-  const W = words.length;
-  if (!k || !W) return pieces;
-  if (W === 1 || k < W) return fitWord(ink, pieces, wordLetters.flat());
-
-  // gapBefore[i]: clear space between piece i and everything to its left, in letter widths.
-  const letterWidth = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
-  const gapBefore = new Float64Array(k);
-  let reach = pieces[0].x1;
-  for (let i = 1; i < k; i++) {
-    gapBefore[i] = (pieces[i].x0 - reach) / letterWidth;
-    reach = Math.max(reach, pieces[i].x1);
-  }
-
-  // Choose word breaks that sit on wide gaps AND give each word about as many
-  // pieces as it has letters; plain "largest gaps" fails on tight handwriting.
-  const MISMATCH_COST = 0.45;
-  const score: number[][] = Array.from({ length: W + 1 }, () => new Array(k + 1).fill(-Infinity));
-  const from: number[][] = Array.from({ length: W + 1 }, () => new Array(k + 1).fill(-1));
-  score[0][0] = 0;
-  for (let w = 1; w <= W; w++) {
-    for (let end = w; end <= k - (W - w); end++) {
-      for (let start = w - 1; start < end; start++) {
-        const prev = score[w - 1][start];
-        if (prev === -Infinity) continue;
-        const s = prev + (w > 1 ? gapBefore[start] : 0) - MISMATCH_COST * Math.abs(end - start - words[w - 1]);
-        if (s > score[w][end]) {
-          score[w][end] = s;
-          from[w][end] = start;
-        }
-      }
-    }
-  }
-  const bounds: number[] = [k];
-  for (let w = W, end = k; w > 0; w--) {
-    end = from[w][end];
-    bounds.unshift(end);
-  }
-  const out: Piece[] = [];
-  for (let w = 0; w < W; w++) out.push(...fitWord(ink, pieces.slice(bounds[w], bounds[w + 1]), wordLetters[w]));
-  return out;
 }
 
 interface Band { y0: number; y1: number }
@@ -594,112 +454,10 @@ function findLineBands(ink: InkMap, valid: number[], centroid: Float64Array): Ba
   return bands;
 }
 
-export interface RowStats {
-  /** Estimated glyph count (multi-stroke marks like " … « merged). */
-  pieces: number;
-  /** Clusters separated by word-sized gaps. */
-  groups: number;
-  /** Row reaches close to the right edge of the writing, so a line can wrap after it. */
-  full: boolean;
-}
-
-function rowStats(ink: InkMap, buckets: number[][]): RowStats[] {
-  const clustered = buckets.map((ids) => clusterRow(ink, ids));
-  const all = clustered.flat();
-  const letterW = median(all.map((p) => p.x1 - p.x0 + 1)) || 1;
-  const left = Math.min(...all.map((p) => p.x0));
-  const right = Math.max(...all.map((p) => p.x1));
-  return clustered.map((pieces) => {
-    let count = 0;
-    let groups = 0;
-    let reach = -Infinity;
-    let prev: Piece | null = null;
-    for (const p of pieces) {
-      const gap = p.x0 - reach;
-      const narrow = (q: Piece) => q.x1 - q.x0 + 1 < letterW * 0.6;
-      if (!prev || !(gap < letterW * 0.35 && narrow(p) && narrow(prev))) count++;
-      if (!prev || gap > letterW * 0.6) groups++;
-      reach = Math.max(reach, p.x1);
-      prev = p;
-    }
-    const rowRight = pieces.length ? Math.max(...pieces.map((p) => p.x1)) : left;
-    return { pieces: count, groups, full: rowRight - left >= (right - left) * 0.75 };
-  });
-}
-
-/**
- * Splits the typed text into one line per row of writing, so text typed on fewer
- * lines still matches writing that wraps (e.g. an alphabet typed as one word but
- * written over two rows). A typed line only continues onto the next row when the
- * row before is full width, rows get about as many characters as they hold glyphs,
- * and no row spans a typed line break when there are enough rows.
- */
-export function spreadText(lines: string[], stats: RowStats[]): string[] | null {
-  const R = stats.length;
-  const letters: string[] = [];
-  const lineOf: number[] = [];
-  const spaceBefore: boolean[] = [];
-  const breakCost: number[] = [];
-  lines.forEach((line, li) => {
-    line.split(/\s+/).filter(Boolean).forEach((word, wi) => {
-      Array.from(word).forEach((ch, ci) => {
-        spaceBefore.push(ci === 0 && wi > 0);
-        breakCost.push(ci > 0 ? 0.3 : wi > 0 ? 0.05 : 0);
-        letters.push(ch);
-        lineOf.push(li);
-      });
-    });
-  });
-  const N = letters.length;
-  if (N < R) return null;
-  const wordStarts = [0];
-  letters.forEach((_, i) => wordStarts.push(wordStarts[i] + (i === 0 || spaceBefore[i] || lineOf[i] !== lineOf[i - 1] ? 1 : 0)));
-  const keepLines = lines.length <= R;
-  const rowCost = (r: number, start: number, end: number) => {
-    const { pieces, groups } = stats[r];
-    const n = end - start;
-    const words = wordStarts[end] - wordStarts[start] + (spaceBefore[start] || start === 0 || lineOf[start] !== lineOf[start - 1] ? 0 : 1);
-    const byLetters = (n - pieces) ** 2 / (pieces + 2);
-    const byWords = words > 1 ? (words - groups) ** 2 / (groups + 2) : Infinity;
-    return Math.min(byLetters, byWords);
-  };
-  const cost: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(Infinity));
-  const from: number[][] = Array.from({ length: R + 1 }, () => new Array(N + 1).fill(-1));
-  cost[0][0] = 0;
-  for (let r = 1; r <= R; r++) {
-    for (let end = r; end <= N - (R - r); end++) {
-      for (let start = r - 1; start < end; start++) {
-        const prev = cost[r - 1][start];
-        if (prev === Infinity) continue;
-        if (keepLines && lineOf[start] !== lineOf[end - 1]) continue;
-        const continues = start > 0 && lineOf[start] === lineOf[start - 1];
-        const wrap = continues ? breakCost[start] + (stats[r - 2]?.full ? 0 : 3) : 0;
-        const c = prev + rowCost(r - 1, start, end) + wrap;
-        if (c < cost[r][end]) {
-          cost[r][end] = c;
-          from[r][end] = start;
-        }
-      }
-    }
-  }
-  if (cost[R][N] === Infinity) return null;
-  const bounds = [N];
-  for (let r = R, end = N; r > 0; r--) {
-    end = from[r][end];
-    bounds.unshift(end);
-  }
-  return Array.from({ length: R }, (_, r) => {
-    let out = '';
-    for (let i = bounds[r]; i < bounds[r + 1]; i++) out += (spaceBefore[i] && i > bounds[r] ? ' ' : '') + letters[i];
-    return out;
-  });
-}
-
-export function segmentSample(ink: InkMap, text: string): Segmentation {
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return { rows: [], error: 'Type the text that appears in the image.' };
+/** Rows of writing, each as left-to-right ink clusters (letters, or parts of one). */
+function inkRows(ink: InkMap, text: string): Piece[][] | null {
   const valid = ink.components.map((c, i) => (isValid(c) ? i + 1 : 0)).filter(Boolean);
-  if (!valid.length) return { rows: [], error: 'No handwriting was found in this image.' };
+  if (!valid.length) return null;
 
   // Vertical centre of each stroke's ink (not its box), so a long descender or
   // ascender doesn't pull a word into the neighbouring line.
@@ -716,13 +474,6 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
     centroid[id] = n ? sum / n : (c.y0 + c.y1) / 2;
   }
   const bands = findLineBands(ink, valid, centroid);
-  if (lines.length > bands.length) {
-    return {
-      rows: [],
-      error: `Found ${bands.length} line${bands.length === 1 ? '' : 's'} of writing but your text has ${lines.length}. Leave clear space between lines, or match the line breaks.`,
-    };
-  }
-
   const buckets: number[][] = bands.map(() => []);
   for (const id of valid) {
     const cy = centroid[id];
@@ -738,23 +489,116 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
     buckets[row].push(id);
   }
 
-  if (lines.length < bands.length) {
-    const spread = spreadText(lines, rowStats(ink, buckets));
-    if (!spread) {
-      return {
-        rows: [],
-        error: `Found ${bands.length} lines of writing but your text only has ${lettersOf(lines.join('')).length} characters. Check the text matches the image.`,
-      };
-    }
-    lines.splice(0, lines.length, ...spread);
-  }
+  const rows = buckets.map((ids) => clusterRow(ink, ids, text, true));
+  // Ruling lines and underlines: long, flat strokes spanning many letters.
+  const widthMedian = median(rows.flat().map((p) => p.x1 - p.x0 + 1)) || 1;
+  return rows
+    .map((pieces) => pieces.filter((p) => !(p.x1 - p.x0 + 1 > widthMedian * 4 && p.y1 - p.y0 + 1 < (p.x1 - p.x0 + 1) * 0.08)))
+    .filter((pieces) => pieces.length);
+}
 
-  const rows = lines.map((line, i) => ({
-    text: line,
-    letters: lettersOf(line),
-    pieces: autoAssign(ink, clusterRow(ink, buckets[i], line), line),
-  }));
-  return { rows };
+function atomFeature(ink: InkMap, piece: Piece, row: number): AtomFeat {
+  const w = piece.x1 - piece.x0 + 1;
+  const cols = columnInk(ink, piece);
+  const colTop = new Int32Array(w).fill(2 ** 30);
+  const colBot = new Int32Array(w).fill(-1);
+  const { width: W, labels, components } = ink;
+  for (const part of piece.parts) {
+    const c = components[part.comp - 1];
+    const fromX = Math.max(c.x0, part.cut0, piece.x0);
+    const toX = Math.min(c.x1, part.cut1 - 1, piece.x1);
+    for (let y = c.y0; y <= c.y1; y++) {
+      for (let x = fromX; x <= toX; x++) {
+        if (labels[y * W + x] !== part.comp) continue;
+        const i = x - piece.x0;
+        if (y < colTop[i]) colTop[i] = y;
+        if (y > colBot[i]) colBot[i] = y;
+      }
+    }
+  }
+  let peak = 1;
+  for (const v of cols) if (v > peak) peak = v;
+  return { row, x0: piece.x0, x1: piece.x1, y0: piece.y0, y1: piece.y1, area: piece.area, cols, colTop, colBot, peak };
+}
+
+function letterSpecs(lines: string[]): LetterSpec[] {
+  const out: LetterSpec[] = [];
+  lines.forEach((line) => {
+    line.split(/\s+/).filter(Boolean).forEach((word, wi) => {
+      Array.from(word).forEach((c, ci) => out.push({ c, spaceBefore: ci === 0 && wi > 0, lineStart: ci === 0 && wi === 0 }));
+    });
+  });
+  return out;
+}
+
+/**
+ * Matches every typed character to its ink across all rows at once (see
+ * glyphAlign). `keep[i] === false` letters still claim their ink, so their
+ * neighbours stay clean, but are left out of the result.
+ */
+function matchLetters(ink: InkMap, rowPieces: Piece[][], letters: LetterSpec[], keep?: boolean[]): Segmentation {
+  const atomPieces = rowPieces.flatMap((pieces) => [...pieces].sort((a, b) => a.x0 - b.x0));
+  const feats = rowPieces.flatMap((pieces, r) => [...pieces].sort((a, b) => a.x0 - b.x0).map((p) => atomFeature(ink, p, r)));
+  const ops = alignGlyphs(feats, letters);
+  if ((globalThis as { __v0debug?: string }).__v0debug) {
+    const range = (globalThis as { __v0debug?: string }).__v0debug!.split(',').map(Number);
+    for (const op of ops) {
+      const at = op.kind === 'skipLetter' ? null : op.kind === 'skipAtom' ? [op.atom] : op.atoms;
+      if (at && feats[at[0]].x0 >= range[0] && feats[at[0]].x0 <= range[1] && feats[at[0]].row === range[2]) {
+        console.log('[v0]', op.kind, 'letters' in op ? op.letters.map((l) => letters[l].c).join('') : 'letter' in op ? letters[op.letter].c : '', at.map((a) => `${feats[a].x0}-${feats[a].x1}:${feats[a].y0}-${feats[a].y1}/${feats[a].area}`).join(' '));
+      }
+    }
+  }
+  const placed: { row: number; letter: number; piece: Piece }[] = [];
+  const missing: string[] = [];
+  for (const op of ops) {
+    if (op.kind === 'skipLetter') missing.push(letters[op.letter].c);
+    else if (op.kind === 'merge') {
+      const piece = measure(ink, op.atoms.flatMap((a) => atomPieces[a].parts));
+      placed.push({ row: feats[op.atoms[0]].row, letter: op.letter, piece });
+    } else if (op.kind === 'split') {
+      const whole = measure(ink, op.atoms.flatMap((a) => atomPieces[a].parts));
+      const row = feats[op.atoms[0]].row;
+      let rest: Piece | null = whole;
+      const parts: Piece[] = [];
+      for (const cut of op.cuts) {
+        const halves: [Piece, Piece] | null = rest ? cutPiece(ink, rest, cut) : null;
+        if (!halves) break;
+        parts.push(halves[0]);
+        rest = halves[1];
+      }
+      if (rest) parts.push(rest);
+      if (parts.length !== op.letters.length) {
+        // A cut landed on empty columns: keep the whole cluster for the first letter.
+        placed.push({ row, letter: op.letters[0], piece: whole });
+        op.letters.slice(1).forEach((l) => missing.push(letters[l].c));
+      } else {
+        op.letters.forEach((l, t) => placed.push({ row, letter: l, piece: parts[t] }));
+      }
+    }
+  }
+  const rows: SampleRow[] = [];
+  for (let r = 0; r < rowPieces.length; r++) {
+    const mine = placed.filter((p) => p.row === r && keep?.[p.letter] !== false).sort((a, b) => a.letter - b.letter);
+    if (!mine.length) continue;
+    let text = '';
+    mine.forEach((p, i) => {
+      const l = letters[p.letter];
+      if (i > 0 && (l.spaceBefore || l.lineStart)) text += ' ';
+      text += l.c;
+    });
+    rows.push({ text, letters: mine.map((p) => letters[p.letter].c), pieces: mine.map((p) => p.piece) });
+  }
+  if (!rows.length) return { rows: [], error: 'None of the text could be matched to the writing. Check the text matches the image.' };
+  return { rows, ...(missing.length ? { missing } : {}) };
+}
+
+export function segmentSample(ink: InkMap, text: string): Segmentation {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], error: 'Type the text that appears in the image.' };
+  const rows = inkRows(ink, text);
+  if (!rows) return { rows: [], error: 'No handwriting was found in this image.' };
+  return matchLetters(ink, rows, letterSpecs(lines));
 }
 
 /** One character located by the AI; box is [x0, y0, x1, y1] as fractions of the image. */
@@ -882,17 +726,58 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
  * letter, so equal counts can't hide a shifted row. Text-only segmentation is
  * the fallback when boxes are missing or sparse.
  */
+/**
+ * Pairs each letter of an AI line with the AI char that names it. The box list
+ * can disagree with the line text (a dropped or extra char), so they are lined
+ * up by longest common subsequence instead of by position.
+ */
+function aiCharFor(letters: string[], chars: AiChar[]): (AiChar | undefined)[] {
+  const n = letters.length;
+  const m = chars.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = letters[i] === chars[j].c ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out: (AiChar | undefined)[] = new Array(n).fill(undefined);
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (letters[i] === chars[j].c) { out[i++] = chars[j++]; }
+    else if (lcs[i + 1][j] >= lcs[i][j + 1]) i++;
+    else j++;
+  }
+  return out;
+}
+
+/**
+ * Segments using an AI reading: the AI's text says which characters to find,
+ * and its per-character boxes pull each match toward where the AI saw it. The
+ * ink itself still decides the exact cut, so loose AI boxes can't slice letters.
+ */
 export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
-  const text = aiLines.map((l) => l.text).filter(Boolean).join('\n');
-  const expected = lettersOf(text).length;
-  const byBoxes = segmentFromBoxes(ink, aiLines);
-  const found = byBoxes.rows.reduce((n, r) => n + r.letters.length, 0);
-  const boxes = () => ({ ...byBoxes, text: byBoxes.rows.map((r) => r.text).join('\n'), source: 'boxes' as const });
-  if (!byBoxes.error && found >= expected * 0.85) return boxes();
-  const byText = segmentSample(ink, text);
-  if (!byText.error && byText.rows.length && byText.rows.every(rowMatched)) return { ...byText, text, source: 'text' };
-  if (!byBoxes.error && found >= expected * 0.5) return boxes();
-  return { ...byText, text, source: 'text' };
+  const lines = aiLines.filter((l) => l.text.trim());
+  const text = lines.map((l) => l.text.trim()).join('\n');
+  if (!lines.length) return { rows: [], error: 'AI did not find any characters.', text, source: 'text' };
+  const rows = inkRows(ink, text);
+  if (!rows) return { rows: [], error: 'No handwriting was found in this image.', text, source: 'text' };
+  const letters = letterSpecs(lines.map((l) => l.text.trim()));
+  const keep: boolean[] = [];
+  let hinted = 0;
+  let li = 0;
+  for (const line of lines) {
+    const own = lettersOf(line.text);
+    const chars = aiCharFor(own, line.chars ?? []);
+    own.forEach((_, i) => {
+      const ch = chars[i];
+      const spec = letters[li++];
+      keep.push(ch?.sure !== false);
+      if (!ch) return;
+      const [x0, y0, x1, y1] = ch.box;
+      spec.hint = { cx: ((x0 + x1) / 2) * ink.width, cy: ((y0 + y1) / 2) * ink.height };
+      hinted++;
+    });
+  }
+  return { ...matchLetters(ink, rows, letters, keep), text, source: hinted ? 'boxes' : 'text' };
 }
 
 export function rowMatched(row: SampleRow) {
