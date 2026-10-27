@@ -394,11 +394,54 @@ const HIGH_MARK_CHARS = /['"`^*°‘’“”]/;
  * Handwritten dots often drift sideways off the stem, so the overlap test in
  * clusterRow misses them and they would otherwise become an extra "letter".
  */
+/**
+ * How far above or below a letter a mark may float and still be pre-joined to it
+ * (i dots, the parts of ! ? : ;). Measured against the row's typical letter
+ * height, not the taller stroke, so a tall joined word doesn't reach a stray
+ * tick in the line gap. Marks further away stay separate and the matcher, which
+ * knows which letters carry a dot, decides.
+ */
+const STACKED_GAP = 0.45;
+function stackedGapLimit(boxes: { x0: number; x1: number; y0: number; y1: number; area: number }[]): number {
+  if (!boxes.length) return 0;
+  const areaMedian = median(boxes.map((b) => b.area));
+  const letters = boxes.filter((b) => b.area >= areaMedian * 0.25);
+  return STACKED_GAP * (median((letters.length ? letters : boxes).map((b) => b.y1 - b.y0 + 1)) || 1);
+}
+
+/**
+ * Vertical distance between two strokes' ink in the columns they share, so a
+ * mark over the low part of a joined word isn't measured against its ascender.
+ */
+function inkGap(ink: InkMap, idA: number, idB: number): number {
+  const a = ink.components[idA - 1];
+  const b = ink.components[idB - 1];
+  const from = Math.max(a.x0, b.x0);
+  const to = Math.min(a.x1, b.x1);
+  const extent = (id: number, c: InkComponent) => {
+    let top = Infinity;
+    let bot = -Infinity;
+    for (let y = c.y0; y <= c.y1; y++) {
+      for (let x = from; x <= to; x++) {
+        if (ink.labels[y * ink.width + x] !== id) continue;
+        if (y < top) top = y;
+        bot = y;
+        break;
+      }
+    }
+    return { top, bot };
+  };
+  const ea = extent(idA, a);
+  const eb = extent(idB, b);
+  if (ea.top === Infinity || eb.top === Infinity) return Math.max(0, b.y0 - a.y1, a.y0 - b.y1);
+  return Math.max(0, eb.top - ea.bot - 1, ea.top - eb.bot - 1);
+}
+
 function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
   if (pieces.length < 2) return pieces;
   const areaMedian = median(pieces.map((p) => p.area));
   const widthMedian = median(pieces.map((p) => p.x1 - p.x0 + 1)) || 1;
-  const heightMedian = median(pieces.map((p) => p.y1 - p.y0 + 1)) || 1;
+  const stackGap = stackedGapLimit(pieces);
   // A text with apostrophes or quotes has real standalone high marks, so only
   // attach marks that actually overlap a letter horizontally.
   const maxGap = HIGH_MARK_CHARS.test(text) ? 0 : widthMedian * 0.35;
@@ -415,7 +458,8 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
       const qh = q.y1 - q.y0 + 1;
       if (p.y1 > q.y0 + qh * 0.35) continue;
       // An i dot floats just above its stem; a mark far higher is a stray pen tick.
-      if (q.y0 - p.y1 > Math.max(qh, heightMedian) * 0.9) continue;
+      if (q.y0 - p.y1 > stackGap) continue;
+      if (Math.min(...p.parts.flatMap((pp) => q.parts.map((qp) => inkGap(ink, pp.comp, qp.comp)))) > stackGap) continue;
       const gap = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1));
       // Among touching candidates, the one most directly below the mark wins.
       const overlap = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) + 1) / (p.x1 - p.x0 + 1);
@@ -438,7 +482,7 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
 export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideBySide = false): Piece[] {
   const comps = compIds.map((id) => ({ id, c: ink.components[id - 1] })).sort((p, q) => p.c.x0 - q.c.x0);
   const parent = comps.map((_, i) => i);
-  const rowHeight = median(comps.map((p) => p.c.y1 - p.c.y0 + 1));
+  const stackGap = stackedGapLimit(comps.map((p) => p.c));
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (let i = 0; i < comps.length; i++) {
     const a = comps[i].c;
@@ -452,8 +496,7 @@ export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideB
       // matcher decides whether they belong together.
       const vOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
       const shorter = Math.min(a.y1 - a.y0, b.y1 - b.y0) + 1;
-      const taller = Math.max(a.y1 - a.y0 + 1, b.y1 - b.y0 + 1, rowHeight);
-      if (-vOverlap > taller * 0.9) continue;
+      if (-vOverlap > stackGap || (vOverlap <= 0 && inkGap(ink, comps[i].id, comps[j].id) > stackGap)) continue;
       if (overlap > narrower * 0.5 && (!splitSideBySide || vOverlap < shorter * 0.4)) parent[find(j)] = find(i);
     }
   }
@@ -823,6 +866,7 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
   const cuts = lines.map((l) => l.chars.slice(1).map((ch, i) => Math.round((l.chars[i].x1 + ch.x0) / 2)));
   const widths = lines.flatMap((l) => l.chars.map((ch) => ch.x1 - ch.x0)).sort((a, b) => a - b);
   const medianW = widths[widths.length >> 1] || 1;
+  const medianH = median(lines.flatMap((l) => l.chars.map((ch) => ch.y1 - ch.y0))) || 1;
   const parts: PiecePart[][][] = lines.map((l) => l.chars.map(() => []));
 
   components.forEach((comp, idx) => {
@@ -845,6 +889,17 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
     // Skip ruling lines and underlines: long, flat strokes spanning many characters.
     if (cw > medianW * 3 && ch < cw * 0.12) return;
     const l = lines[line];
+    // A small mark that only grazes a loose AI box from far above or below is a stray
+    // pen tick, not part of the glyph. i dots and accents sit just outside the box.
+    if (cw < medianW * 0.6 && ch < medianH * 0.6) {
+      const home = l.chars.reduce((b, box) => {
+        const d = Math.abs((comp.x0 + comp.x1) / 2 - (box.x0 + box.x1) / 2);
+        return d < b.d ? { d, box } : b;
+      }, { d: Infinity, box: l.chars[0] }).box;
+      const inside = Math.min(comp.y1 + 1, home.y1) - Math.max(comp.y0, home.y0);
+      const away = Math.max(home.y0 - comp.y1, comp.y0 - home.y1);
+      if (inside < ch * 0.5 && away > (home.y1 - home.y0) * 0.35) return;
+    }
     const boundaries = [comp.x0, ...cuts[line].filter((x) => x > comp.x0 && x <= comp.x1), comp.x1 + 1];
     for (let s = 0; s + 1 < boundaries.length; s++) {
       const cut0 = boundaries[s];

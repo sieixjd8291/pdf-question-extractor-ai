@@ -195,6 +195,32 @@ test('a dot just above a short letter still joins it', () => {
   assert.ok(seg.rows[0].pieces[0].y0 <= 18, 'the i keeps its dot');
 });
 
+test('a stray tick above a joined word is not glued onto its letters', () => {
+  // "mil" as one connected stroke whose tall l reaches up, then "no"; a pen tick floats over the m.
+  const word: Rect[] = [[10, 60, 60, 40], [70, 96, 10, 3], [80, 60, 14, 40], [94, 96, 10, 3], [104, 40, 14, 60], [150, 60, 30, 40], [200, 60, 30, 40]];
+  for (const tickY of [2, 18]) {
+    const seg = segmentSample(buildInkMap(image(260, 120, [...word, [36, tickY, 4, 8]])), 'mil no');
+    assert.equal(seg.error, undefined);
+    const [row] = seg.rows;
+    assert.ok(rowMatched(row));
+    assert.deepEqual(row.letters, ['m', 'i', 'l', 'n', 'o']);
+    assert.ok(row.pieces.every((p) => p.y0 >= 40), `tick at y=${tickY} stays out of every glyph`);
+    assert.ok(row.pieces[2].x0 >= 95, 'the l is the tall stroke, not the tick');
+  }
+});
+
+test('a stray tick grazing a loose AI box is left out of the glyph', () => {
+  const W = 160;
+  const H = 120;
+  const rects: Rect[] = [[10, 60, 30, 40], [60, 60, 30, 40], [110, 60, 30, 40], [72, 22, 4, 8]];
+  const box = (x0: number, x1: number): [number, number, number, number] => [x0 / W, 30 / H, x1 / W, 104 / H];
+  const seg = segmentFromBoxes(buildInkMap(image(W, H, rects)), [
+    { text: 'abc', chars: [{ c: 'a', box: box(6, 44) }, { c: 'b', box: box(56, 94) }, { c: 'c', box: box(106, 144) }] },
+  ]);
+  assert.ok(rowMatched(seg.rows[0]));
+  assert.equal(seg.rows[0].pieces[1].y0, 60, 'the b does not reach up to the tick');
+});
+
 test('a photo with a shadow across the page still yields separate letters', () => {
   const W = 400;
   const H = 120;
