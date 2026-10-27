@@ -53,6 +53,9 @@ const SKIP_LETTER = 3;
 const SPLIT_BASE = 0.8;
 /** Most letters one connected stroke may hold (a cursive word). */
 const MAX_JOINED = 12;
+/** Joined runs this much narrower or wider than their letters' typical width are not split. */
+const MIN_SPLIT_RATIO = 0.55;
+const MAX_SPLIT_RATIO = 1.8;
 
 function priorOf(c: string) {
   return GLYPH_PRIORS[c] ?? DEFAULT_PRIOR;
@@ -207,10 +210,45 @@ function runDp(
   for (let i = 0; i < K; i++) widthBefore[i + 1] = widthBefore[i] + atoms[i].x1 - atoms[i].x0 + 1;
   const band = N <= 250 ? N : Math.max(60, Math.ceil(N * 0.15));
 
+  // Splits depend only on the atoms and the letters' widths, so the same word
+  // tried at different text positions reuses one cut.
+  const splitCache = new Map<string, ReturnType<typeof splitAtom>>();
+  const cachedSplit = (i: number, n: number, j: number, m: number) => {
+    let key = `${i},${n}`;
+    for (let t = 0; t < m; t++) key += letters[j + t].c;
+    if (splitCache.has(key)) return splitCache.get(key)!;
+    const out = splitAtom(combined(i, n), letters, priors, j, m);
+    splitCache.set(key, out);
+    return out;
+  };
+
   for (let i = 0; i <= K; i++) {
     const center = Math.round((N * widthBefore[i]) / Math.max(1, widthBefore[K]));
     const jFrom = Math.max(0, center - band);
     const jTo = Math.min(N, center + band);
+
+    // Groups of 1-4 neighbouring atoms starting at i don't depend on the letter.
+    const groups: { n: number; box: Box; gapCost: number; areas: number[]; area: number }[] = [];
+    if (i < K) {
+      let box: Box = { x0: atoms[i].x0, x1: atoms[i].x1, y0: atoms[i].y0, y1: atoms[i].y1 };
+      let area = atoms[i].area;
+      let gapCost = 0;
+      for (let n = 1; n <= 4 && i + n <= K; n++) {
+        if (n > 1) {
+          const a = atoms[i + n - 1];
+          if (a.row !== atoms[i].row) break;
+          const gap = (a.x0 - box.x1) / s;
+          if (gap > 1.5) break;
+          gapCost += 1.0 * Math.max(0, gap - 0.25);
+          box = { x0: Math.min(box.x0, a.x0), x1: Math.max(box.x1, a.x1), y0: Math.min(box.y0, a.y0), y1: Math.max(box.y1, a.y1) };
+          area += a.area;
+        }
+        const areas = atoms.slice(i, i + n).map((a) => a.area).sort((p, q) => p - q);
+        groups.push({ n, box, gapCost, areas, area });
+      }
+    }
+    const overlapping = i + 1 < K && atoms[i + 1].row === atoms[i].row && atoms[i + 1].x0 - atoms[i].x1 <= 0.3 * s;
+
     for (let j = jFrom; j <= jTo; j++) {
       const here = cost[i * S + j];
       if (here === Infinity) continue;
@@ -220,37 +258,22 @@ function runDp(
       const join = joinCost(i, j);
 
       // One letter from n neighbouring atoms of the same row.
-      let box: Box = { x0: atoms[i].x0, x1: atoms[i].x1, y0: atoms[i].y0, y1: atoms[i].y1 };
-      let groupArea = atoms[i].area;
-      let gapCost = 0;
       const strokes = priors[j][3];
-      for (let n = 1; n <= 4 && i + n <= K; n++) {
-        if (n > 1) {
-          const a = atoms[i + n - 1];
-          if (a.row !== atoms[i].row) break;
-          const gap = (a.x0 - box.x1) / s;
-          if (gap > 1.5) break;
-          gapCost += 1.0 * Math.max(0, gap - 0.25);
-          box = { x0: Math.min(box.x0, a.x0), x1: Math.max(box.x1, a.x1), y0: Math.min(box.y0, a.y0), y1: Math.max(box.y1, a.y1) };
-          groupArea += a.area;
-        }
+      for (const g of groups) {
         let strokeCost = 0;
-        if (n < strokes) strokeCost = 0.9 * (strokes - n);
-        else if (n > strokes) {
+        if (g.n < strokes) strokeCost = 0.9 * (strokes - g.n);
+        else {
           // Extra small marks (dots, accents, broken bits) are cheap; extra letters are not.
-          for (let t = strokes; t < n; t++) {
-            const small = [...atoms.slice(i, i + n)].sort((p, q) => p.area - q.area)[t - strokes];
-            strokeCost += small.area < groupArea * 0.25 ? 0.35 : 0.9;
-          }
+          for (let t = strokes; t < g.n; t++) strokeCost += g.areas[t - strokes] < g.area * 0.25 ? 0.35 : 0.9;
         }
-        const c = here + join + gapCost + strokeCost + glyphCost(box, atoms[i].row, j, letters, priors, geo);
-        relax((i + n) * S + j + 1, c, 3, n);
+        const c = here + join + g.gapCost + strokeCost + glyphCost(g.box, atoms[i].row, j, letters, priors, geo);
+        relax((i + g.n) * S + j + 1, c, 3, g.n);
       }
 
       // m letters joined in one atom, or in n atoms that overlap (an f bar over the
       // next letter's stem, with that letter's dot as a second atom).
       for (let n = 1; n <= 2 && i + n <= K; n++) {
-        if (n > 1 && (atoms[i + 1].row !== atoms[i].row || atoms[i + 1].x0 - atoms[i].x1 > 0.3 * s)) break;
+        if (n > 1 && !overlapping) break;
         const a = combined(i, n);
         const aw = a.x1 - a.x0 + 1;
         let expected = priors[j][2];
@@ -260,11 +283,13 @@ function runDp(
           expected += priors[j + m - 1][2];
           strokes += priors[j + m - 1][3];
           const ratio = aw / (expected * s);
-          if (ratio < 0.5) break;
-          if (ratio > 2) continue;
+          if (ratio < MIN_SPLIT_RATIO) break;
+          if (ratio > MAX_SPLIT_RATIO) continue;
           const to = (i + n) * S + j + m;
-          if (here + join + SPLIT_BASE * (m - 1) >= cost[to]) continue;
-          const split = splitAtom(a, letters, priors, j, m);
+          // Fixed cost plus the width misfit of the whole run is a lower bound.
+          const floor = here + join + SPLIT_BASE * (m - 1) + 0.5 * Math.log(ratio) ** 2;
+          if (floor >= cost[to]) continue;
+          const split = cachedSplit(i, n, j, m);
           if (!split) continue;
           let c = here + join + SPLIT_BASE * (m - 1) + split.ink * 1.5 + 0.9 * Math.max(0, n - strokes);
           for (let t = 0; t < m; t++) {

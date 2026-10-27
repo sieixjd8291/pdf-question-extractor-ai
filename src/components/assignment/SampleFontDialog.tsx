@@ -28,6 +28,8 @@ interface Sample {
   text: string;
   rows: SampleRow[];
   error?: string;
+  /** Typed characters that could not be found in the writing. */
+  notFound?: string[];
   reading?: boolean;
   aiNote?: string;
 }
@@ -104,7 +106,7 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
 
   const applyText = (s: Sample, text: string): Sample => {
     const seg = segmentSample(s.ink, text);
-    return { ...s, text, rows: seg.rows, error: seg.error };
+    return { ...s, text, rows: seg.rows, error: seg.error, notFound: seg.missing };
   };
 
   const runAi = async (id: number, aiImage: string) => {
@@ -119,6 +121,7 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
           text: seg.text,
           rows: seg.rows,
           error: seg.error,
+          notFound: seg.missing,
           reading: false,
           aiNote: `AI found ${count} glyph${count === 1 ? '' : 's'}. Click any box to check, merge or split it before creating the font.`,
         };
@@ -298,6 +301,11 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
                       {matchedRows === current.rows.length ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
                       {matchedRows} of {current.rows.length} lines matched
                     </p>
+                    {current.notFound && current.notFound.length > 0 && (
+                      <p className="am-sf-note">
+                        Not found in the writing: {Array.from(new Set(current.notFound)).join(' ')}
+                      </p>
+                    )}
                     <ul className="am-sf-rows">
                       {current.rows.map((row, r) => (
                         <li key={r} className={rowMatched(row) ? 'ok' : 'off'}>
