@@ -195,6 +195,40 @@ test('a dot just above a short letter still joins it', () => {
   assert.ok(seg.rows[0].pieces[0].y0 <= 18, 'the i keeps its dot');
 });
 
+test('AI boxes shifted by whole letters still label each glyph correctly', () => {
+  const W = 520;
+  const H = 120;
+  // Two rows of separate letters with different widths so a shift is detectable.
+  const widths = [20, 34, 14, 28, 40, 18, 30, 24];
+  const rects: Rect[] = [];
+  const truth: { c: string; x0: number; x1: number; y0: number }[] = [];
+  const text = ['abcdefgh', 'ijklmnop'];
+  text.forEach((line, r) => {
+    let x = 10;
+    Array.from(line).forEach((c, i) => {
+      const w = widths[(i + r * 3) % widths.length];
+      rects.push([x, 10 + r * 60, w, 40]);
+      truth.push({ c, x0: x, x1: x + w - 1, y0: 10 + r * 60 });
+      x += w + 22;
+    });
+  });
+  const ink = buildInkMap(image(W, H, rects));
+  for (const shift of [55, 110]) {
+    const aiLines = text.map((line, r) => ({
+      text: line,
+      chars: truth.filter((t) => t.y0 === 10 + r * 60).map((t) => ({
+        c: t.c,
+        box: [(t.x0 + shift) / W, (t.y0 - 8) / H, (t.x1 + shift) / W, (t.y0 + 32) / H] as [number, number, number, number],
+      })),
+    }));
+    const seg = segmentWithAi(ink, aiLines);
+    assert.equal(seg.error, undefined);
+    const got = seg.rows.flatMap((r) => r.pieces.map((p, i) => ({ c: r.letters[i], x0: p.x0 })));
+    assert.equal(got.length, 16, `shift ${shift}`);
+    for (const t of truth) assert.equal(got.find((g) => g.c === t.c)?.x0, t.x0, `${t.c} at shift ${shift}`);
+  }
+});
+
 test('a stray tick above a joined word is not glued onto its letters', () => {
   // "mil" as one connected stroke whose tall l reaches up, then "no"; a pen tick floats over the m.
   const word: Rect[] = [[10, 60, 60, 40], [70, 96, 10, 3], [80, 60, 14, 40], [94, 96, 10, 3], [104, 40, 14, 60], [150, 60, 30, 40], [200, 60, 30, 40]];

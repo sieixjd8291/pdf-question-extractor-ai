@@ -31,6 +31,12 @@ const SCENARIOS: Scenario[] = [
     typed: `ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n\n0123456789\n\n${PUNCT1} ${PUNCT2}`,
   },
   {
+    name: 'spaced-sheet',
+    image: ['A B C D E F G H I J K L M N O P Q R S T U V W X Y Z', 'a b c d e f g h i j k l m n o p q r s t u v w x y z', '0 1 2 3 4 5 6 7 8 9', '. , ! ? : ; - ( ) [ ] " \' < > { }'],
+    typed: 'A B C D E F G H I J K L M N O P Q R S T U V W X Y Z\na b c d e f g h i j k l m n o p q r s t u v w x y z\n0 1 2 3 4 5 6 7 8 9\n. , ! ? : ; - ( ) [ ] " \' < > { }',
+    size: 44,
+  },
+  {
     name: 'user-sheet-exact-lines',
     image: ['ABCDEFGHIJKLMNOPQRSTUVWX', 'YZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', PUNCT1, PUNCT2],
     typed: `ABCDEFGHIJKLMNOPQRSTUVWX\nYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n${PUNCT1}\n${PUNCT2}`,
@@ -176,13 +182,17 @@ function score(seg: Segmentation, truth: Truth[]) {
 /** Simulates a Gemini reading: right text, boxes off by a fraction of a glyph. */
 function fakeAi(truth: Truth[], sc: Scenario, W: number, H: number, seed: number, noise: number): AiLine[] {
   const rand = rng(seed * 7 + 1);
+  // Real model boxes are often off as a whole: shifted by a glyph or two and scaled.
+  const shift = Number(process.env.AI_SHIFT ?? 0);
+  const scale = Number(process.env.AI_SCALE ?? 1);
+  const glyphW = truth.map((t) => t.box[2] - t.box[0]).sort((a, b) => a - b)[truth.length >> 1] ?? 0;
   return sc.image.map((text, li) => ({
     text,
     chars: truth.filter((t) => t.line === li).map((t) => {
       const w = t.box[2] - t.box[0];
       const h = t.box[3] - t.box[1];
-      const dx = (rand() - 0.5) * 2 * noise * w;
-      const dy = (rand() - 0.5) * 2 * noise * h;
+      const dx = (rand() - 0.5) * 2 * noise * w + shift * glyphW * 1.6 + (scale - 1) * t.box[0];
+      const dy = (rand() - 0.5) * 2 * noise * h + (scale - 1) * t.box[1];
       const g = 1 + (rand() - 0.5) * noise;
       return { c: t.c, sure: true, box: [(t.box[0] + dx) / W, (t.box[1] + dy) / H, (t.box[0] + dx + w * g) / W, (t.box[1] + dy + h * g) / H] as [number, number, number, number] };
     }),
