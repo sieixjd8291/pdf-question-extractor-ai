@@ -107,13 +107,19 @@ export function alignGlyphs(atoms: AtomFeat[], letters: LetterSpec[]): AlignOp[]
   const priors = letters.map((l) => priorOf(l.c));
   const tiny = atoms.map((a) => a.area < medArea * 0.15);
   // Leading atoms of a row, ignoring specks, and the reach of the ink before each atom.
+  // Wide stray strokes (underlines, table borders, header bars) span many columns;
+  // don't let them push `reach` to the end of the row and poison every atom underneath.
+  const widths = atoms.filter((_, i) => !tiny[i]).map((a) => a.x1 - a.x0 + 1);
+  const medW = median(widths) || 1;
+  const wideSpan = medW * 4.5;
   const rowLead = new Uint8Array(K);
   const reach = new Float64Array(K).fill(-Infinity);
   for (let i = 0; i < K; i++) {
     const first = i === 0 || atoms[i - 1].row !== atoms[i].row;
     if (first) rowLead[i] = 1;
     else {
-      reach[i] = Math.max(reach[i - 1], atoms[i - 1].x1);
+      const prevW = atoms[i - 1].x1 - atoms[i - 1].x0 + 1;
+      reach[i] = prevW > wideSpan ? reach[i - 1] : Math.max(reach[i - 1], atoms[i - 1].x1);
       let lead = 1;
       for (let t = i - 1; t >= 0 && atoms[t].row === atoms[i].row; t--) if (!tiny[t]) { lead = 0; break; }
       rowLead[i] = lead;
@@ -155,7 +161,7 @@ function glyphCost(box: Box, row: number, li: number, letters: LetterSpec[], pri
   if (hint) {
     const dx = (cx - hint.cx) / s;
     const dy = ((box.y0 + box.y1) / 2 - hint.cy) / s;
-    cost += 0.4 * Math.min(dx * dx + dy * dy, 16);
+    cost += 0.65 * Math.min(dx * dx + dy * dy, 25);
   }
   return cost;
 }
@@ -208,10 +214,11 @@ function runDp(
   };
 
   // Long texts: only explore letters near where this atom's share of the ink
-  // says they should be. Short texts search everything.
+  // says they should be. Short and medium texts search everything so stray
+  // headers or skipped template labels can't push the true alignment outside the band.
   const widthBefore = new Float64Array(K + 1);
   for (let i = 0; i < K; i++) widthBefore[i + 1] = widthBefore[i] + atoms[i].x1 - atoms[i].x0 + 1;
-  const band = N <= 250 ? N : Math.max(60, Math.ceil(N * 0.15));
+  const band = N <= 450 ? N : Math.max(120, Math.ceil(N * 0.3));
 
   // Splits depend only on the atoms and the letters' widths, so the same word
   // tried at different text positions reuses one cut.

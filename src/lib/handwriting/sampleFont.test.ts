@@ -273,3 +273,78 @@ test('a photo with a shadow across the page still yields separate letters', () =
   assert.ok(rowMatched(seg.rows[0]));
   assert.ok(seg.rows[0].pieces.every((p) => p.x1 - p.x0 < 40), 'shaded paper is not read as ink');
 });
+
+test('a glyph sheet with table grid borders, hollow section frames and colored badges detects every letter', () => {
+  const W = 800;
+  const H = 360;
+  const rects: Rect[] = [];
+  // Hollow section header frame at top
+  rects.push([30, 12, 160, 2], [30, 34, 160, 2], [30, 12, 2, 24], [188, 12, 2, 24]);
+
+  // 2x13 grid for A-M and N-Z with full horizontal and vertical grid lines
+  const gx0 = 30;
+  const gy0 = 45;
+  const cellW = 55;
+  const cellH = 55;
+  const cols = 13;
+  const gridW = cols * cellW;
+  for (let r = 0; r <= 2; r++) rects.push([gx0, gy0 + r * cellH, gridW, 2]);
+  for (let c = 0; c <= cols; c++) rects.push([gx0 + c * cellW, gy0, 2, cellH * 2]);
+
+  // 1x10 grid for 0-9 below
+  const ny0 = 195;
+  const nCellW = 65;
+  const nGridW = 10 * nCellW;
+  for (let r = 0; r <= 1; r++) rects.push([gx0, ny0 + r * cellH, nGridW, 2]);
+  for (let c = 0; c <= 10; c++) rects.push([gx0 + c * nCellW, ny0, 2, cellH]);
+
+  // Place handwritten letters inside each cell
+  const truth: { c: string; cx: number; cy: number; box: [number, number, number, number] }[] = [];
+  const upper1 = 'ABCDEFGHIJKLM';
+  const upper2 = 'NOPQRSTUVWXYZ';
+  const digits = '0123456789';
+
+  Array.from(upper1).forEach((ch, c) => {
+    const x = gx0 + c * cellW + 16;
+    const y = gy0 + 12;
+    rects.push([x, y, 22, 32]);
+    truth.push({ c: ch, cx: x + 11, cy: y + 16, box: [(x - 2) / W, (y - 2) / H, (x + 24) / W, (y + 34) / H] });
+  });
+  Array.from(upper2).forEach((ch, c) => {
+    const x = gx0 + c * cellW + 16;
+    const y = gy0 + cellH + 12;
+    rects.push([x, y, 22, 32]);
+    truth.push({ c: ch, cx: x + 11, cy: y + 16, box: [(x - 2) / W, (y - 2) / H, (x + 24) / W, (y + 34) / H] });
+  });
+  Array.from(digits).forEach((ch, c) => {
+    const x = gx0 + c * nCellW + 20;
+    const y = ny0 + 12;
+    rects.push([x, y, 20, 30]);
+    truth.push({ c: ch, cx: x + 10, cy: y + 15, box: [(x - 2) / W, (y - 2) / H, (x + 22) / W, (y + 32) / H] });
+  });
+
+  const img = image(W, H, rects);
+  // Paint a colored pill badge above the numbers grid
+  for (let y = 165; y < 188; y++) {
+    for (let x = 30; x < 150; x++) {
+      const o = (y * W + x) * 4;
+      img.data[o] = 45; img.data[o + 1] = 110; img.data[o + 2] = 220;
+    }
+  }
+
+  const ink = buildInkMap(img);
+  // Both text-only segmentation and AI-assisted segmentation must match all 36 characters cleanly
+  const textSeg = segmentSample(ink, `${upper1}\n${upper2}\n${digits}`);
+  assert.equal(textSeg.error, undefined);
+  assert.deepEqual(textSeg.rows.map((r) => r.letters.join('')), [upper1, upper2, digits]);
+  assert.ok(textSeg.rows.every(rowMatched));
+
+  const aiSeg = segmentWithAi(ink, [
+    { text: upper1, chars: truth.slice(0, 13).map((t) => ({ c: t.c, box: t.box })) },
+    { text: upper2, chars: truth.slice(13, 26).map((t) => ({ c: t.c, box: t.box })) },
+    { text: digits, chars: truth.slice(26).map((t) => ({ c: t.c, box: t.box })) },
+  ]);
+  assert.equal(aiSeg.error, undefined);
+  assert.equal(aiSeg.rows.reduce((s, r) => s + r.letters.length, 0), 36);
+  assert.ok(aiSeg.rows.every(rowMatched));
+});
