@@ -193,6 +193,129 @@ function strokeWidth(labels: Int32Array, w: number, h: number): number {
   return 63;
 }
 
+/**
+ * Strips thin, straight horizontal and vertical table borders / cell dividers
+ * from `labels` before connected-component labelling so a glyph sheet's grid
+ * never glues letters together or masquerades as giant strokes. Where a letter
+ * stroke crosses a grid line, the column/row is wider than the line thickness
+ * and those crossing pixels are preserved.
+ */
+function stripGridLines(labels: Int32Array, w: number, h: number, pen: number): void {
+  if (w < 120 || h < 120) return;
+  const maxThick = Math.max(2, Math.min(8, Math.round(pen * 1.4)));
+  const minHorizRun = Math.max(90, Math.round(w * 0.42));
+  const minVertRun = Math.max(40, Math.round(h * 0.055));
+  const drop = new Uint8Array(w * h);
+
+  // Horizontal grid lines: long runs where vertical thickness stays <= maxThick.
+  for (let y = 0; y < h; y++) {
+    let runStart = -1;
+    let thinCount = 0;
+    for (let x = 0; x <= w; x++) {
+      const idx = y * w + x;
+      if (x < w && labels[idx] === -1) {
+        if (runStart < 0) { runStart = x; thinCount = 0; }
+        let vt = 1;
+        for (let dy = 1; dy <= maxThick + 1 && y - dy >= 0 && labels[(y - dy) * w + x] === -1; dy++) vt++;
+        for (let dy = 1; dy <= maxThick + 1 && y + dy < h && labels[(y + dy) * w + x] === -1; dy++) vt++;
+        if (vt <= maxThick) thinCount++;
+      } else if (runStart >= 0) {
+        const len = x - runStart;
+        if (len >= minHorizRun && thinCount >= len * 0.78) {
+          for (let xx = runStart; xx < x; xx++) {
+            let vt = 1;
+            for (let dy = 1; dy <= maxThick + 1 && y - dy >= 0 && labels[(y - dy) * w + xx] === -1; dy++) vt++;
+            for (let dy = 1; dy <= maxThick + 1 && y + dy < h && labels[(y + dy) * w + xx] === -1; dy++) vt++;
+            if (vt <= maxThick) drop[y * w + xx] = 1;
+          }
+        }
+        runStart = -1;
+      }
+    }
+  }
+
+  // Vertical grid lines: only erase columns that connect into a horizontal grid line
+  // (table dividers) or span a large share of the image height, so standalone 'I', 'l', '1', '|' stay intact.
+  const veryTallRun = Math.max(90, Math.round(h * 0.25));
+  for (let x = 0; x < w; x++) {
+    let runStart = -1;
+    let thinCount = 0;
+    let touchesHoriz = false;
+    for (let y = 0; y <= h; y++) {
+      const idx = y * w + x;
+      if (y < h && labels[idx] === -1) {
+        if (runStart < 0) { runStart = y; thinCount = 0; touchesHoriz = false; }
+        if (drop[idx] || (y > 0 && drop[(y - 1) * w + x]) || (y + 1 < h && drop[(y + 1) * w + x])) touchesHoriz = true;
+        let ht = 1;
+        for (let dx = 1; dx <= maxThick + 1 && x - dx >= 0 && labels[y * w + x - dx] === -1; dx++) ht++;
+        for (let dx = 1; dx <= maxThick + 1 && x + dx < w && labels[y * w + x + dx] === -1; dx++) ht++;
+        if (ht <= maxThick) thinCount++;
+      } else if (runStart >= 0) {
+        const len = y - runStart;
+        if ((len >= minVertRun && touchesHoriz && thinCount >= len * 0.75) || (len >= veryTallRun && thinCount >= len * 0.88)) {
+          for (let yy = runStart; yy < y; yy++) {
+            let ht = 1;
+            for (let dx = 1; dx <= maxThick + 1 && x - dx >= 0 && labels[yy * w + x - dx] === -1; dx++) ht++;
+            for (let dx = 1; dx <= maxThick + 1 && x + dx < w && labels[yy * w + x + dx] === -1; dx++) ht++;
+            if (ht <= maxThick) drop[yy * w + x] = 1;
+          }
+        }
+        runStart = -1;
+      }
+    }
+  }
+
+  for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
+}
+
+/**
+ * Detects hollow rectangular frames (cell borders, section label boxes, table outlines)
+ * whose ink sits almost entirely along their 4 outer edges.
+ */
+function isHollowFrame(labels: Int32Array, w: number, comp: InkComponent, id: number, pen: number): boolean {
+  const bw = comp.x1 - comp.x0 + 1;
+  const bh = comp.y1 - comp.y0 + 1;
+  const minSide = Math.max(18, pen * 7);
+  if (bw < minSide || bh < minSide) return false;
+  if (bw < Math.max(28, pen * 10) && bh < Math.max(28, pen * 10)) return false;
+  const border = Math.max(3, Math.min(Math.floor(Math.min(bw, bh) * 0.2), Math.round(pen * 2.2)));
+  let borderInk = 0;
+  let innerInk = 0;
+  let topCols = 0, botCols = 0, leftRows = 0, rightRows = 0;
+  const topSeen = new Uint8Array(bw);
+  const botSeen = new Uint8Array(bw);
+  const leftSeen = new Uint8Array(bh);
+  const rightSeen = new Uint8Array(bh);
+
+  for (let y = comp.y0; y <= comp.y1; y++) {
+    const row = y * w;
+    const onTop = y - comp.y0 < border;
+    const onBot = comp.y1 - y < border;
+    for (let x = comp.x0; x <= comp.x1; x++) {
+      if (labels[row + x] !== id) continue;
+      const onLeft = x - comp.x0 < border;
+      const onRight = comp.x1 - x < border;
+      if (onTop || onBot || onLeft || onRight) {
+        borderInk++;
+        if (onTop && !topSeen[x - comp.x0]) { topSeen[x - comp.x0] = 1; topCols++; }
+        if (onBot && !botSeen[x - comp.x0]) { botSeen[x - comp.x0] = 1; botCols++; }
+        if (onLeft && !leftSeen[y - comp.y0]) { leftSeen[y - comp.y0] = 1; leftRows++; }
+        if (onRight && !rightSeen[y - comp.y0]) { rightSeen[y - comp.y0] = 1; rightRows++; }
+      } else {
+        innerInk++;
+      }
+    }
+  }
+  const total = borderInk + innerInk;
+  if (!total) return false;
+  // A rectangular frame covers almost all 4 sides and has very little ink in its interior,
+  // or is a wide multi-cell frame spanning a large part of the page.
+  const fourSides = topCols >= bw * 0.75 && botCols >= bw * 0.75 && leftRows >= bh * 0.75 && rightRows >= bh * 0.75;
+  if (fourSides && innerInk <= total * 0.12 && (bw > pen * 14 || bh > pen * 14)) return true;
+  if (bw > w * 0.35 && bh > pen * 6 && innerInk <= total * 0.25 && (topCols >= bw * 0.7 || botCols >= bw * 0.7)) return true;
+  return false;
+}
+
 export function buildInkMap(img: ImageData): InkMap {
   const { width: w, height: h, data } = img;
   const n = w * h;
@@ -220,10 +343,10 @@ export function buildInkMap(img: ImageData): InkMap {
   let threshold = Math.min(PAPER_CUTOFF, otsuThreshold(hist, n));
 
   // Drop colored marks that are not the pen (red spell-check squiggles, highlighter,
-  // colored ruling): with dark ink every strongly colored pixel goes; with colored
-  // ink only pixels far from the pen's hue go. Otherwise a squiggle under a line
+  // colored ruling, template pill badges): with dark ink every strongly colored pixel goes;
+  // with colored ink only pixels far from the pen's hue go. Otherwise a squiggle under a line
   // glues all its letters into one blob.
-  const COLORED = 90;
+  const COLORED = 65;
   let dark = 0;
   let colored = 0;
   const hueCount = new Uint32Array(36);
@@ -250,6 +373,7 @@ export function buildInkMap(img: ImageData): InkMap {
   const labels = new Int32Array(n);
   for (let i = 0; i < n; i++) if (gray[i] <= threshold) labels[i] = -1;
   const pen = strokeWidth(labels, w, h);
+  stripGridLines(labels, w, h, pen);
 
   const found: InkComponent[] = [];
   const stack = new Int32Array(n);
@@ -287,19 +411,20 @@ export function buildInkMap(img: ImageData): InkMap {
   }
 
   // Photo noise, paper grain and JPEG specks are far smaller than a pen dot; page
-  // edges, desk and shadow blobs are large, solid and touch the border.
+  // edges, desk, shadow blobs, ruled lines and hollow table/header boxes are dropped.
   const minArea = Math.max(MIN_COMPONENT_AREA, Math.round(Math.min(pen * pen * 0.5, (Math.max(w, h) / 100) ** 2)));
   const keep = new Int32Array(found.length + 1);
   const components: InkComponent[] = [];
   found.forEach((c, i) => {
+    const id = i + 1;
     const bw = c.x1 - c.x0 + 1;
     const bh = c.y1 - c.y0 + 1;
     const touchesEdge = c.x0 === 0 || c.y0 === 0 || c.x1 === w - 1 || c.y1 === h - 1;
     const solid = c.area > bw * bh * 0.5 && bw > pen * 12 && bh > pen * 12;
     const edgeBlob = touchesEdge && (bw > w * 0.3 || bh > h * 0.3) && c.area > bw * bh * 0.35;
-    if (c.area < minArea || solid || edgeBlob) return;
+    if (c.area < minArea || solid || edgeBlob || isHollowFrame(labels, w, c, id, pen)) return;
     components.push(c);
-    keep[i + 1] = components.length;
+    keep[id] = components.length;
   });
   if (components.length !== found.length) for (let i = 0; i < n; i++) if (labels[i]) labels[i] = keep[labels[i]];
   return { width: w, height: h, labels, components };
@@ -524,21 +649,21 @@ function splitBand(ink: InkMap, isInk: Uint8Array, band: Band, density: Float64A
   if (h < 12) return [band];
   let peak = 0;
   for (let y = band.y0; y <= band.y1; y++) peak = Math.max(peak, density[y]);
-  const margin = Math.max(3, Math.round(h * 0.15));
+  const margin = Math.max(3, Math.round(h * 0.12));
   const candidates: number[] = [];
   for (let y = band.y0 + margin; y <= band.y1 - margin; y++) {
     const v = density[y];
-    if (v > peak * 0.35 || v > density[y - 1] || v > density[y + 1]) continue;
+    if (v > peak * 0.45 || v > density[y - 1] || v > density[y + 1]) continue;
     let above = 0;
     let below = 0;
     for (let t = band.y0; t < y; t++) above = Math.max(above, density[t]);
     for (let t = y + 1; t <= band.y1; t++) below = Math.max(below, density[t]);
-    if (v <= Math.min(above, below) * 0.45) candidates.push(y);
+    if (v <= Math.min(above, below) * 0.52) candidates.push(y);
   }
   candidates.sort((a, b) => density[a] - density[b]);
 
   const { width: W, labels } = ink;
-  for (const cut of candidates.slice(0, 8)) {
+  for (const cut of candidates.slice(0, 10)) {
     const above = new Map<number, number>();
     const below = new Map<number, number>();
     for (let y = band.y0; y <= band.y1; y++) {
@@ -557,8 +682,8 @@ function splitBand(ink: InkMap, isInk: Uint8Array, band: Band, density: Float64A
       const b = below.get(id) ?? 0;
       total += a + b;
       const share = a / (a + b);
-      if (share >= 0.8) topMass += a + b;
-      else if (share <= 0.2) bottomMass += a + b;
+      if (share >= 0.78) topMass += a + b;
+      else if (share <= 0.22) bottomMass += a + b;
       else mixed += a + b;
     }
     // Both sides need real writing (not just i dots), and few strokes may straddle.
@@ -570,9 +695,9 @@ function splitBand(ink: InkMap, isInk: Uint8Array, band: Band, density: Float64A
       return n >= 2;
     };
     if (
-      mixed <= total * 0.2 &&
-      topMass >= total * 0.15 &&
-      bottomMass >= total * 0.15 &&
+      mixed <= total * 0.24 &&
+      topMass >= total * 0.14 &&
+      bottomMass >= total * 0.14 &&
       hasRow(band.y0, cut - 1) &&
       hasRow(cut, band.y1)
     ) {
@@ -904,6 +1029,28 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
       const away = Math.max(home.y0 - comp.y1, comp.y0 - home.y1);
       if (inside < ch * 0.5 && away > (home.y1 - home.y0) * 0.35) return;
     }
+    // Separate character strokes stay whole and go to the character box they overlap
+    // most, unless a stroke spans well across multiple character boxes (joined letters).
+    const boxOverlaps = l.chars.map((box, bi) => {
+      const ox = Math.min(comp.x1 + 1, box.x1) - Math.max(comp.x0, box.x0);
+      const oy = Math.min(comp.y1 + 1, box.y1) - Math.max(comp.y0, box.y0);
+      return { bi, ox: Math.max(0, ox), area: ox > 0 && oy > 0 ? ox * oy : 0 };
+    });
+    const strongBoxes = boxOverlaps.filter((o, bi) => {
+      const bw = Math.max(1, l.chars[bi].x1 - l.chars[bi].x0);
+      return o.ox >= Math.min(cw, bw) * 0.45 && o.area > 0;
+    });
+    if (cw <= medianW * 1.35 && strongBoxes.length <= 1) {
+      let bestTarget = 0;
+      let bestScore = -Infinity;
+      const cx = (comp.x0 + comp.x1) / 2;
+      l.chars.forEach((box, bi) => {
+        const score = boxOverlaps[bi].area - Math.abs(cx - (box.x0 + box.x1) / 2) * 0.25;
+        if (score > bestScore) { bestScore = score; bestTarget = bi; }
+      });
+      parts[line][bestTarget].push({ comp: id, cut0: comp.x0, cut1: comp.x1 + 1 });
+      return;
+    }
     const boundaries = [comp.x0, ...cuts[line].filter((x) => x > comp.x0 && x <= comp.x1), comp.x1 + 1];
     for (let s = 0; s + 1 < boundaries.length; s++) {
       const cut0 = boundaries[s];
@@ -986,13 +1133,11 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   const letters = letterSpecs(lines.map((l) => l.text.trim()));
   const keep: boolean[] = [];
   const raw: ({ cx: number; cy: number; line: number } | undefined)[] = [];
-  let li = 0;
   lines.forEach((line, lineNo) => {
     const own = lettersOf(line.text);
     const chars = aiCharFor(own, line.chars ?? []);
     own.forEach((_, i) => {
       const ch = chars[i];
-      li++;
       keep.push(ch?.sure !== false);
       if (!ch) { raw.push(undefined); return; }
       const [x0, y0, x1, y1] = ch.box;
@@ -1001,15 +1146,37 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   });
   if (!raw.some(Boolean)) return { ...matchLetters(ink, rows, letters, keep), text, source: 'text' };
 
-  // Model boxes are often off as a whole (shifted by a letter or two, or scaled), and
-  // raw hints would then drag every letter onto its neighbour's ink. Read the ink
-  // without hints first, then fit the AI coordinates onto where letters really are.
+  const countMatched = (seg: Segmentation) =>
+    seg.rows.reduce((s, r) => s + (rowMatched(r) ? r.pieces.length : 0), 0);
+  const countUnique = (seg: Segmentation) => {
+    const set = new Set<string>();
+    for (const r of seg.rows) if (rowMatched(r)) for (const c of r.letters) set.add(c);
+    return set.size;
+  };
+  const scoreSeg = (seg: Segmentation) => countUnique(seg) * 1000 + countMatched(seg) - (seg.error ? 5000 : 0);
+
+  // 1) Un-hinted global alignment + calibrated hints (handles shifted AI boxes).
   const placed: { letter: number; piece: Piece }[] = [];
   const plain = matchLetters(ink, rows, letters, keep, placed);
+  const candidates: { seg: Segmentation; source: 'text' | 'boxes' }[] = [{ seg: plain, source: 'text' }];
+
   const hints = calibrateHints(raw, placed);
-  if (!hints) return { ...plain, text, source: 'text' };
-  hints.forEach((h, i) => { if (h) letters[i].hint = h; });
-  return { ...matchLetters(ink, rows, letters, keep), text, source: 'boxes' };
+  if (hints) {
+    const calLetters = letters.map((l, i) => (hints[i] ? { ...l, hint: hints[i] } : { ...l }));
+    candidates.push({ seg: matchLetters(ink, rows, calLetters, keep), source: 'boxes' });
+  }
+
+  // 2) Direct raw AI hints (essential on glyph sheets where un-hinted DP gets confused by headers).
+  const rawLetters = letters.map((l, i) => (raw[i] ? { ...l, hint: { cx: raw[i]!.cx, cy: raw[i]!.cy } } : { ...l }));
+  candidates.push({ seg: matchLetters(ink, rows, rawLetters, keep), source: 'boxes' });
+
+  // 3) Direct box-based extraction (snaps whole strokes to AI boxes).
+  const boxed = segmentFromBoxes(ink, lines);
+  if (boxed.rows.length) candidates.push({ seg: boxed, source: 'boxes' });
+
+  candidates.sort((a, b) => scoreSeg(b.seg) - scoreSeg(a.seg));
+  const best = candidates[0];
+  return { ...best.seg, text, source: best.source };
 }
 
 /** Least-squares line through points, or null when x has no spread. */
@@ -1310,8 +1477,22 @@ export async function loadSampleImage(file: File): Promise<{ ink: InkMap; url: s
   img.src = url;
   await img.decode();
   const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
-  const natW = img.naturalWidth || 1600;
-  const natH = img.naturalHeight || 400;
+  let natW = img.naturalWidth;
+  let natH = img.naturalHeight;
+  if (isSvg && (!natW || !natH || (natW === 300 && natH === 150))) {
+    try {
+      const svgText = await file.text();
+      const vb = /viewBox\s*=\s*["']\s*[-+\d.]+\s+[-+\d.]+\s+([\d.]+)\s+([\d.]+)/i.exec(svgText);
+      if (vb) {
+        natW = parseFloat(vb[1]) || natW;
+        natH = parseFloat(vb[2]) || natH;
+      }
+    } catch {
+      // ignore SVG parse fallback errors
+    }
+  }
+  natW = natW || 1600;
+  natH = natH || 400;
   const longest = Math.max(natW, natH);
   const scale = isSvg ? 3000 / longest : Math.min(1, 3000 / longest);
   const w = Math.max(1, Math.round(natW * scale));

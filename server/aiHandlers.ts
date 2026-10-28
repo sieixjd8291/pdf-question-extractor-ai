@@ -707,16 +707,17 @@ export async function transcribeHandwritingHandler(body: any, apiKey: string): P
   if (typeof imageData !== "string" || !imageData) throw new InvalidPayloadError("Missing imageData in request body");
   const mimeType = /^data:(image\/(?:png|jpeg|webp));base64,/.exec(imageData)?.[1] ?? "image/png";
 
-  const prompt = `Transcribe the handwriting in this image EXACTLY, character by character.
+  const prompt = `Transcribe the handwriting or glyph sheet in this image EXACTLY, character by character.
 Rules:
-- Return one array entry per visual line of writing, top to bottom, in the same order as they appear. If a sequence wraps onto a new line in the image, that is a new entry.
+- Return one array entry per visual row of handwritten characters, top to bottom, in the same order as they appear. If a sequence wraps onto a new visual row in the image (for example A-M on one row and N-Z on the next row), each visual row MUST be a separate entry.
+- If the image is a font template or glyph sheet (with grid cells, tables, or section headers like "Uppercase Letters", "Lowercase Letters", "Numbers", "Punctuation & Symbols", "Math / Special Glyphs", "Ligatures", or small printed guide labels), IGNORE the section header banners, printed category titles, and small printed cell guide labels — transcribe ONLY the target handwritten glyphs inside the cells and any handwritten pangram/sample sentences.
 - Preserve every character exactly as written: case, digits, punctuation, symbols. Do not correct spelling, do not complete sequences, do not add or drop characters.
-- Separate words with a single space only where there is a visible gap between words. Letters written as a continuous run (e.g. an alphabet "ABCDEF") stay together without spaces.
-- Ignore anything that is not handwriting: spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.
-- The writing may be words, sentences or whole paragraphs, not just alphabets. Read it the way a person would: use the surrounding word and sentence to decide what each ambiguous shape is (l vs I vs 1, O vs 0, S vs 5, Z vs 2, rn vs m, cl vs d, u vs v, a vs o, g vs q, n vs h). Letters inside words are letters, digits inside numbers are digits, capitals start sentences and names.
+- Separate words with a single space only where there is a visible word gap. Characters in separate grid cells may be separated by spaces or listed in sequence.
+- Ignore anything that is not a handwritten glyph: table grid lines, cell borders, spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.
+- The writing may be words, sentences, paragraphs, or a glyph grid. Read it the way a person would: use surrounding context or grid order (A-Z, a-z, 0-9) to decide what each ambiguous shape is (l vs I vs 1, O vs 0, S vs 5, Z vs 2, rn vs m, cl vs d, u vs v, a vs o, g vs q, n vs h).
 - Use context ONLY to identify what a written shape is. Never insert, remove or reorder characters, and never fix a genuine misspelling.
-- Set "sure" to false for a character that is illegible, crossed out, smudged, overlapping another character, or still ambiguous after using context; otherwise true.
-- For EVERY character (not spaces) also return its glyph bounding box as box_2d = [ymin, xmin, ymax, xmax], normalized to 0-1000 of the image height/width. The box must tightly enclose all ink of that one character, including dots (i, j), accents and descenders, and nothing of its neighbours.
+- Set "sure" to false for a character that is illegible, crossed out, smudged, overlapping another character, or a multi-character ligature/icon that is not a single character; otherwise true.
+- For EVERY character (not spaces) also return its glyph bounding box as box_2d = [ymin, xmin, ymax, xmax], normalized to 0-1000 of the image height/width. The box must tightly enclose ONLY the handwritten ink of that one character (including dots on i/j, accents, and descenders), NOT the surrounding grid cell border and nothing of its neighbours.
 - "chars" must list the characters of "text" in reading order (left to right), one entry per non-space character, so joining chars[].c equals text with spaces removed.`;
 
   const { text, modelUsed } = await generateJsonWithFallback(apiKey, [
