@@ -159,6 +159,9 @@ async function callGemini(
   if (typeof config.temperature === "number") {
     generationConfig.temperature = config.temperature;
   }
+  if (/gemini-2\.5/i.test(model)) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
 
   const response = await fetch(
     `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
@@ -722,8 +725,8 @@ Rules:
   ], {
     responseMimeType: "application/json",
     temperature: 0,
-    maxOutputTokens: 2048,
-    timeoutMs: 16000,
+    maxOutputTokens: 4096,
+    timeoutMs: 10000,
     responseSchema: {
       type: Type.OBJECT,
       properties: {

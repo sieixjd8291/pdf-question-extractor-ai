@@ -385,14 +385,14 @@ test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are 
     const yTop = gy0 + 4; // only 2px below top horizontal border
     const yMid = gy0 + 24;
     if (ch === 'd') {
-      // bowl + tall right vertical stem reaching near top border
-      rects.push([x, yMid, 16, 22], [x + 14, yTop + 2, 4, 40]);
+      // hollow bowl + tall right vertical stem reaching within 1px of top border
+      rects.push([x, yMid, 14, 3], [x, yMid + 19, 14, 3], [x, yMid, 3, 22], [x + 14, yTop - 2, 4, 44]);
     } else if (ch === 'f') {
-      // top hook + crossbar + tall vertical stem reaching near both borders
-      rects.push([x + 6, yTop, 12, 4], [x + 6, yTop, 4, 55], [x, yMid, 18, 4]);
+      // top hook + detached crossbar + tall vertical stem reaching within 2px of both borders
+      rects.push([x + 6, yTop - 1, 12, 4], [x + 6, yTop - 1, 4, 60], [x, yMid, 5, 4], [x + 11, yMid, 7, 4]);
     } else if (ch === 'j') {
-      // dot + vertical stem + bottom hook near bottom cell border
-      rects.push([x + 10, yTop + 4, 5, 5], [x + 10, yTop + 14, 4, 42], [x, gy0 + cellH - 8, 14, 4]);
+      // dot + vertical stem + detached bottom hook near bottom cell border
+      rects.push([x + 10, yTop + 4, 5, 5], [x + 10, yTop + 14, 4, 42], [x, gy0 + cellH - 8, 9, 4]);
     } else {
       rects.push([x, yMid, 20, 24]);
     }
@@ -402,11 +402,11 @@ test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are 
     const r2Top = gy0 + cellH;
     const yMid = r2Top + 14;
     if (ch === 'p') {
-      // bowl + left vertical descender stem reaching within 3px of bottom border
-      rects.push([x, yMid, 4, 46], [x, yMid, 18, 22]);
+      // hollow bowl + left vertical descender stem reaching within 2px of bottom border
+      rects.push([x, yMid, 4, 48], [x + 4, yMid, 14, 3], [x + 4, yMid + 19, 14, 3], [x + 15, yMid, 3, 22]);
     } else if (ch === 'q') {
-      // bowl + right vertical descender stem + tail reaching within 2px of bottom border
-      rects.push([x, yMid, 18, 22], [x + 14, yMid, 4, 47], [x + 14, r2Top + cellH - 6, 12, 4]);
+      // hollow bowl + right vertical descender stem + detached tail reaching within 2px of bottom border
+      rects.push([x, yMid, 14, 3], [x, yMid + 19, 14, 3], [x, yMid, 3, 22], [x + 14, yMid, 4, 48], [x + 19, r2Top + cellH - 6, 8, 4]);
     } else {
       rects.push([x, yMid, 20, 24]);
     }
@@ -421,13 +421,27 @@ test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are 
   seg.rows.forEach((r) => r.letters.forEach((ch, i) => byChar.set(ch, r.pieces[i])));
 
   const d = byChar.get('d')!;
-  assert.ok(d.y1 - d.y0 + 1 >= 38, `d retains full ascender height (got ${d.y1 - d.y0 + 1})`);
+  assert.ok(d.y1 - d.y0 + 1 >= 42 && d.x1 - d.x0 + 1 >= 16, `d retains hollow bowl and full ascender height (got ${d.x1 - d.x0 + 1}x${d.y1 - d.y0 + 1})`);
   const f = byChar.get('f')!;
-  assert.ok(f.y1 - f.y0 + 1 >= 52, `f retains full descender height (got ${f.y1 - f.y0 + 1})`);
+  assert.ok(f.y1 - f.y0 + 1 >= 58 && f.x1 - f.x0 + 1 >= 16, `f retains detached crossbar and full stem height (got ${f.x1 - f.x0 + 1}x${f.y1 - f.y0 + 1})`);
   const j = byChar.get('j')!;
-  assert.ok(j.y1 - j.y0 + 1 >= 50, `j retains dot, stem and hook (got ${j.y1 - j.y0 + 1})`);
+  assert.ok(j.y1 - j.y0 + 1 >= 50 && j.x1 - j.x0 + 1 >= 13, `j retains dot, stem and detached hook (got ${j.x1 - j.x0 + 1}x${j.y1 - j.y0 + 1})`);
   const p = byChar.get('p')!;
-  assert.ok(p.y1 - p.y0 + 1 >= 44, `p retains full descender stem (got ${p.y1 - p.y0 + 1})`);
+  assert.ok(p.y1 - p.y0 + 1 >= 46 && p.x1 - p.x0 + 1 >= 16, `p retains hollow bowl and full descender stem (got ${p.x1 - p.x0 + 1}x${p.y1 - p.y0 + 1})`);
   const q = byChar.get('q')!;
-  assert.ok(q.y1 - q.y0 + 1 >= 45, `q retains full descender stem and tail (got ${q.y1 - q.y0 + 1})`);
+  assert.ok(q.y1 - q.y0 + 1 >= 46 && q.x1 - q.x0 + 1 >= 24, `q retains hollow bowl, descender stem and tail (got ${q.x1 - q.x0 + 1}x${q.y1 - q.y0 + 1})`);
+
+  // Also verify detectGlyphTemplate recognizes this 2x13 lowercase template directly.
+  const tmpl = detectGlyphTemplate(ink);
+  assert.ok(tmpl, 'detectGlyphTemplate recognizes the 2x13 template');
+  assert.equal(tmpl.rows.reduce((n, r) => n + r.letters.length, 0), 26);
+
+  // Verify segmentWithAi filters section headers and splits 26-char lines across 2x13 grid rows.
+  const aiSeg = segmentWithAi(ink, [
+    { text: 'Lowercase Letters', chars: [] },
+    { text: 'abcdefghijklmnopqrstuvwxyz', chars: [] },
+  ]);
+  assert.equal(aiSeg.error, undefined);
+  assert.equal(aiSeg.rows.length, 2);
+  assert.equal(aiSeg.rows.reduce((n, r) => n + r.letters.length, 0), 26);
 });
