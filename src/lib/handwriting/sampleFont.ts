@@ -278,21 +278,23 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
   // 2) Detect rectangular section-header badges / folder tabs (e.g. "[Uppercase Letters]",
   // "[Lowercase Letters]", "[Numbers]", "[Punctuation & Symbols]") and erase both the box
   // and the small printed label words inside it so they are never read as glyphs.
-  const minBadgeW = Math.max(36, Math.round(w * 0.05));
-  const maxBadgeW = Math.round(w * 0.46);
+  const minBadgeW = Math.max(30, Math.round(w * 0.04));
+  const maxBadgeW = Math.round(w * 0.48);
   const minBadgeH = Math.max(10, Math.min(18, pen * 3));
   const maxBadgeH = Math.max(32, Math.round(h * 0.08));
+  const badgeCut = Math.min(234, gridCut + 12);
+  const isBadge = (idx: number) => labels[idx] === -1 || gray[idx] <= badgeCut;
   for (let yTop = 0; yTop < h - minBadgeH; yTop++) {
     let x = 0;
     while (x < w - minBadgeW) {
-      if (!isLine(yTop * w + x)) { x++; continue; }
+      if (!isBadge(yTop * w + x)) { x++; continue; }
       let xEnd = x;
       let gap = 0;
       let thin = 0;
       while (xEnd < w) {
-        const has = isLine(yTop * w + xEnd)
-          || (yTop > 0 && isLine((yTop - 1) * w + xEnd))
-          || (yTop + 1 < h && isLine((yTop + 1) * w + xEnd));
+        const has = isBadge(yTop * w + xEnd)
+          || (yTop > 0 && isBadge((yTop - 1) * w + xEnd))
+          || (yTop + 1 < h && isBadge((yTop + 1) * w + xEnd));
         if (has) {
           gap = 0;
           if (vertThickAt(xEnd, yTop) <= maxThick * 2) thin++;
@@ -305,39 +307,39 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         }
       }
       const bw = xEnd - x;
-      // Only isolated header tabs/boxes (not full-width table borders) qualify.
+      // Only isolated header tabs/boxes sitting directly on a horizontal table border qualify.
       if (bw >= minBadgeW && bw <= maxBadgeW && thin >= bw * 0.65 && !horizGrid[yTop * w + x + (bw >> 1)]) {
         for (let yBot = yTop + minBadgeH; yBot <= Math.min(h - 1, yTop + maxBadgeH); yBot++) {
           const bh = yBot - yTop;
           if (bw < bh * 1.75) continue;
-          // Check bottom border (often shared with a table's top horizontal grid line) and left/right walls.
-          let botInk = 0;
+          // Bottom border of a section-header tab is shared with the table's top horizontal grid line.
+          let botGrid = 0;
           for (let xx = x; xx < xEnd; xx++) {
-            if (
-              horizGrid[yBot * w + xx] ||
-              isLine(yBot * w + xx) ||
-              (yBot > 0 && isLine((yBot - 1) * w + xx)) ||
-              (yBot + 1 < h && isLine((yBot + 1) * w + xx))
-            ) botInk++;
+            if (horizGrid[yBot * w + xx]) botGrid++;
           }
-          if (botInk < bw * 0.72) continue;
+          if (botGrid < bw * 0.65) continue;
           let leftWall = 0;
           let rightWall = 0;
           for (let yy = yTop; yy <= yBot; yy++) {
             for (let dx = -2; dx <= 2; dx++) {
               const lx = x + dx;
-              if (lx >= 0 && lx < w && isLine(yy * w + lx)) { leftWall++; break; }
+              if (lx >= 0 && lx < w && isBadge(yy * w + lx)) { leftWall++; break; }
             }
             for (let dx = -2; dx <= 2; dx++) {
               const rx = xEnd - 1 + dx;
-              if (rx >= 0 && rx < w && isLine(yy * w + rx)) { rightWall++; break; }
+              if (rx >= 0 && rx < w && isBadge(yy * w + rx)) { rightWall++; break; }
             }
           }
-          if (leftWall >= bh * 0.68 && rightWall >= bh * 0.68) {
-            for (let yy = Math.max(0, yTop - 2); yy <= Math.min(h - 1, yBot + 2); yy++) {
+          if (leftWall >= bh * 0.65 && rightWall >= bh * 0.65) {
+            for (let yy = Math.max(0, yTop - 2); yy < yBot; yy++) {
               for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + 2); xx++) {
                 drop[yy * w + xx] = 1;
-                if (Math.abs(yy - yBot) <= 1) horizGrid[yy * w + xx] = 1;
+              }
+            }
+            for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + 2); xx++) {
+              for (let dy = -1; dy <= 1; dy++) {
+                const yy = yBot + dy;
+                if (yy >= 0 && yy < h) horizGrid[yy * w + xx] = 1;
               }
             }
             break;
@@ -350,7 +352,9 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
 
   // Apply horizontal and badge removals to `labels` now so grid intersections (+ / T corners)
   // are no longer wide horizontally when vertical grid lines are measured in step 3.
+  const badgeDrop = new Uint8Array(drop);
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
+  const isVertLine = (idx: number) => !badgeDrop[idx] && isLine(idx);
 
   // 3) Vertical grid lines (cell dividers): erase columns that bridge directly between two
   // horizontal grid lines (or span a large share of the image height), keeping letter stems intact.
@@ -396,7 +400,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         }
         const isUnbranched = wideInterior <= innerSpan * 0.12;
         const isCellWall = topTouch && botTouch && isUnbranched;
-        const isLongBorder = span >= veryTallRun && thinRowsCount >= span * 0.85 && isUnbranched;
+        const isLongBorder = span >= veryTallRun && (topTouch || botTouch) && thinRowsCount >= span * 0.85 && isUnbranched;
         if (isCellWall || isLongBorder) {
           for (let yy = runStart; yy < endY; yy++) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -421,7 +425,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
       for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx;
         if (xx < 0 || xx >= w) continue;
-        if (isLine(y * w + xx)) {
+        if (isVertLine(y * w + xx)) {
           hasNear = true;
           if (horizThickAt(xx, y) <= maxThick) thinNear = true;
         }
@@ -1410,54 +1414,44 @@ function normalizeSymbolTokens(line: string, targetCount?: number): string {
  * the ink layout when every row aligns cleanly.
  */
 export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string }) | null {
-  const probe = inkRows(ink, '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12');
-  if (!probe || probe.length < 2 || probe.length > 9) return null;
-  const counts = probe.map((r) => r.length);
-  const is13 = (n: number) => n >= 11 && n <= 15;
-  const is26 = (n: number) => n >= 24 && n <= 28;
-  const is10 = (n: number) => n >= 9 && n <= 12;
-  const is20 = (n: number) => n >= 17 && n <= 23;
-
   const upper13 = ['A B C D E F G H I J K L M', 'N O P Q R S T U V W X Y Z'];
   const lower13 = ['a b c d e f g h i j k l m', 'n o p q r s t u v w x y z'];
   const digits10 = '0 1 2 3 4 5 6 7 8 9';
   const punct1 = '. , ; : ! ? \' " ( ) - _ / \\ | @ # $ % &';
-  const punct2 = (n: number) => (n === 19 ? '* + = < > ≤ ≥ ~ ^ ` [ ] { } , ₹ € ™ ®' : '* + = < > ≤ ≥ ~ ^ ` [ ] { } , . ₹ € ™ ®');
+  const punct2a = '* + = < > ≤ ≥ ~ ^ ` [ ] { } , . ₹ € ™ ®';
+  const punct2b = '* + = < > ≤ ≥ ~ ^ ` [ ] { } , ₹ € ™ ®';
 
-  const lines: string[] = [];
-  let i = 0;
-  if (i + 3 < counts.length && is13(counts[i]) && is13(counts[i + 1]) && is13(counts[i + 2]) && is13(counts[i + 3])) {
-    lines.push(...upper13, ...lower13);
-    i += 4;
-  } else if (i + 2 < counts.length && is13(counts[i]) && is13(counts[i + 1]) && is13(counts[i + 2])) {
-    lines.push(upper13[1], ...lower13);
-    i += 3;
-  } else if (i + 1 < counts.length && is13(counts[i]) && is13(counts[i + 1])) {
-    const followedByDigits = i + 2 < counts.length && is10(counts[i + 2]);
-    lines.push(...(followedByDigits ? lower13 : upper13));
-    i += 2;
-  } else if (i + 1 < counts.length && is26(counts[i]) && is26(counts[i + 1])) {
-    lines.push('A B C D E F G H I J K L M N O P Q R S T U V W X Y Z', 'a b c d e f g h i j k l m n o p q r s t u v w x y z');
-    i += 2;
-  }
-  if (i < counts.length && is10(counts[i])) {
-    lines.push(digits10);
-    i++;
-  }
-  if (i < counts.length && is20(counts[i])) {
-    lines.push(punct1);
-    i++;
-  }
-  if (i < counts.length && is20(counts[i])) {
-    lines.push(punct2(counts[i]));
-    i++;
-  }
-  if (i !== counts.length || lines.length < 2) return null;
+  const candidates: string[][] = [
+    [...upper13, ...lower13, digits10, punct1, punct2a],
+    [...upper13, ...lower13, digits10, punct1, punct2b],
+    [...upper13, ...lower13, digits10],
+    [...upper13, ...lower13],
+    [upper13[1], ...lower13, digits10],
+    [...lower13, digits10, punct1, punct2a],
+    [...upper13, digits10],
+    [...lower13, digits10],
+  ];
 
-  const text = lines.join('\n');
-  const seg = segmentSample(ink, text);
-  if (seg.error || seg.rows.length !== lines.length || !seg.rows.every(rowMatched)) return null;
-  return { ...seg, text };
+  // Quick row-band count check so we only evaluate candidates matching the image's line count.
+  const bandCheck = inkRows(ink, '1\n2\n3\n4\n5\n6\n7');
+  if (!bandCheck || bandCheck.length < 2) return null;
+
+  for (const lines of candidates) {
+    const rows = inkRows(ink, lines.join('\n'));
+    if (!rows || rows.length !== lines.length) continue;
+    // Verify each row's atom count is close to the template row's glyph count before full DP.
+    const countsMatch = rows.every((r, idx) => {
+      const target = lettersOf(lines[idx]).length;
+      return r.length >= target - 1 && r.length <= target + 8;
+    });
+    if (!countsMatch) continue;
+    const text = lines.join('\n');
+    const seg = segmentSample(ink, text);
+    if (!seg.error && seg.rows.length === lines.length && seg.rows.every(rowMatched)) {
+      return { ...seg, text };
+    }
+  }
+  return null;
 }
 
 export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
