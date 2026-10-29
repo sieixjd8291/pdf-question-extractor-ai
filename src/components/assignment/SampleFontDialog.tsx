@@ -39,20 +39,20 @@ type Selection = { row: number; index: number } | null;
 
 async function readHandwriting(imageData: string): Promise<AiLine[]> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 24000);
+  const timer = setTimeout(() => ctrl.abort(), 18000);
   let res: Response;
   try {
     res = await fetch('/api/transcribe-handwriting', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...geminiAuthHeaders() },
-      body: JSON.stringify({ imageData }),
+      body: JSON.stringify({ imageData, mimeType: 'image/jpeg' }),
       signal: ctrl.signal,
     });
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new Error('AI reading timed out.');
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('AI took too long to read this image. Try again, or split it into smaller samples.');
     }
-    throw e;
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -144,7 +144,12 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
       const message = e instanceof Error ? e.message : 'AI could not read the image.';
       updateSample(id, (s) => {
         const tmpl = detectGlyphTemplate(s.ink);
-        if (tmpl) {
+        const manual = s.text.trim() ? segmentSample(s.ink, s.text) : null;
+        const score = (seg: { rows: SampleRow[]; missing?: string[]; error?: string } | null) =>
+          !seg || seg.error
+            ? -1
+            : seg.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0) - (seg.missing?.length ?? 0) * 2;
+        if (tmpl && score(tmpl) >= score(manual)) {
           const count = tmpl.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0);
           return {
             ...s,
@@ -156,15 +161,17 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
             aiNote: `Detected ${count} template glyphs automatically. Click any box to check, merge or split it.`,
           };
         }
-        if (s.text.trim()) {
-          const reseg = segmentSample(s.ink, s.text);
+        if (manual) {
+          const count = manual.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0);
           return {
             ...s,
-            rows: reseg.rows,
-            error: reseg.error,
-            notFound: reseg.missing,
+            rows: manual.rows,
+            error: manual.error,
+            notFound: manual.missing,
             reading: false,
-            aiNote: `${message} Re-aligned using the current text.`,
+            aiNote: count > 0
+              ? `Aligned ${count} glyph${count === 1 ? '' : 's'} using the current text. Click any box to check, merge or split it.`
+              : `${message} Re-aligned using the current text.`,
           };
         }
         return { ...s, reading: false, aiNote: `${message} Type the text yourself instead.` };
@@ -283,10 +290,11 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
   const anyReading = samples.some((s) => s.reading);
 
   const dropProps = {
-    onDragOver: (e: DragEvent) => { e.preventDefault(); setDragging(true); },
-    onDragLeave: () => setDragging(false),
+    onDragOver: (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragging(true); },
+    onDragLeave: (e: DragEvent) => { e.stopPropagation(); setDragging(false); },
     onDrop: (e: DragEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       setDragging(false);
       void addFiles(Array.from(e.dataTransfer.files));
     },

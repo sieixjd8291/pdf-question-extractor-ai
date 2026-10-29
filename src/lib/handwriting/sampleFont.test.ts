@@ -435,4 +435,13 @@ test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are 
   const tmpl = detectGlyphTemplate(ink);
   assert.ok(tmpl, 'detectGlyphTemplate recognizes the 2x13 template');
   assert.equal(tmpl.rows.reduce((n, r) => n + r.letters.length, 0), 26);
+
+  // Verify segmentWithAi filters section headers and splits 26-char lines across 2x13 grid rows.
+  const aiSeg = segmentWithAi(ink, [
+    { text: 'Lowercase Letters', chars: [] },
+    { text: 'abcdefghijklmnopqrstuvwxyz', chars: [] },
+  ]);
+  assert.equal(aiSeg.error, undefined);
+  assert.equal(aiSeg.rows.length, 2);
+  assert.equal(aiSeg.rows.reduce((n, r) => n + r.letters.length, 0), 26);
 });
