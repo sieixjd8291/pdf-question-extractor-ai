@@ -41,8 +41,9 @@ async function networkFirstNavigation(request) {
   try {
     const response = await fetch(request);
     if (response.ok) {
+      const copy = response.clone();
       const cache = await caches.open(PRECACHE);
-      cache.put(APP_SHELL, response.clone());
+      await cache.put(APP_SHELL, copy);
     }
     return response;
   } catch {
@@ -55,8 +56,9 @@ async function cacheFirst(request) {
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) {
+    const copy = response.clone();
     const cache = await caches.open(RUNTIME);
-    cache.put(request, response.clone());
+    await cache.put(request, copy);
   }
   return response;
 }
@@ -66,7 +68,10 @@ async function staleWhileRevalidate(request) {
   const cached = await cache.match(request);
   const network = fetch(request)
     .then((response) => {
-      if (response.ok || response.type === 'opaque') cache.put(request, response.clone());
+      if (response.ok || response.type === 'opaque') {
+        const copy = response.clone();
+        cache.put(request, copy);
+      }
       return response;
     })
     .catch(() => cached);
@@ -89,7 +94,10 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(
         fetch(request)
           .then((response) => {
-            if (response.ok) caches.open(RUNTIME).then((cache) => cache.put(request, response.clone()));
+            if (response.ok) {
+              const copy = response.clone();
+              caches.open(RUNTIME).then((cache) => cache.put(request, copy));
+            }
             return response;
           })
           .catch(async () => (await caches.match(request, { ignoreSearch: true })) || Response.error()),

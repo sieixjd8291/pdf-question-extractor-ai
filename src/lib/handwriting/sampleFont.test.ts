@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInkMap, rowMatched, segmentSample, segmentFromBoxes, segmentWithAi, type Piece } from './sampleFont';
+import { buildInkMap, detectGlyphTemplate, rowMatched, segmentSample, segmentFromBoxes, segmentWithAi, type Piece } from './sampleFont';
 
 type Rect = [x: number, y: number, w: number, h: number];
 
@@ -361,4 +361,73 @@ test('a glyph sheet with table grid borders, hollow section frames and colored b
   assert.equal(aiSeg.rows.reduce((s, r) => s + r.letters.length, 0), 36);
   assert.ok(aiSeg.rows.every(rowMatched));
   assert.ok(aiSeg.rows.flatMap((r) => r.pieces).every((p) => p.y1 - p.y0 + 1 <= 40), 'no multi-row pieces in AI seg');
+});
+
+test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are never cut off', () => {
+  const W = 800;
+  const H = 220;
+  const gx0 = 30;
+  const gy0 = 30;
+  const cellW = 55;
+  const cellH = 65;
+  const cols = 13;
+  const gridW = cols * cellW;
+  const rects: Rect[] = [];
+
+  // 2x13 grid for lowercase a-m and n-z
+  for (let r = 0; r <= 2; r++) rects.push([gx0, gy0 + r * cellH, gridW, 2]);
+  for (let c = 0; c <= cols; c++) rects.push([gx0 + c * cellW, gy0, 2, cellH * 2]);
+
+  const row1 = 'abcdefghijklm';
+  const row2 = 'nopqrstuvwxyz';
+  Array.from(row1).forEach((ch, c) => {
+    const x = gx0 + c * cellW + 15;
+    const yTop = gy0 + 4; // only 2px below top horizontal border
+    const yMid = gy0 + 24;
+    if (ch === 'd') {
+      // bowl + tall right vertical stem reaching near top border
+      rects.push([x, yMid, 16, 22], [x + 14, yTop + 2, 4, 40]);
+    } else if (ch === 'f') {
+      // top hook + crossbar + tall vertical stem reaching near both borders
+      rects.push([x + 6, yTop, 12, 4], [x + 6, yTop, 4, 55], [x, yMid, 18, 4]);
+    } else if (ch === 'j') {
+      // dot + vertical stem + bottom hook near bottom cell border
+      rects.push([x + 10, yTop + 4, 5, 5], [x + 10, yTop + 14, 4, 42], [x, gy0 + cellH - 8, 14, 4]);
+    } else {
+      rects.push([x, yMid, 20, 24]);
+    }
+  });
+  Array.from(row2).forEach((ch, c) => {
+    const x = gx0 + c * cellW + 15;
+    const r2Top = gy0 + cellH;
+    const yMid = r2Top + 14;
+    if (ch === 'p') {
+      // bowl + left vertical descender stem reaching within 3px of bottom border
+      rects.push([x, yMid, 4, 46], [x, yMid, 18, 22]);
+    } else if (ch === 'q') {
+      // bowl + right vertical descender stem + tail reaching within 2px of bottom border
+      rects.push([x, yMid, 18, 22], [x + 14, yMid, 4, 47], [x + 14, r2Top + cellH - 6, 12, 4]);
+    } else {
+      rects.push([x, yMid, 20, 24]);
+    }
+  });
+
+  const ink = buildInkMap(image(W, H, rects));
+  const seg = segmentSample(ink, `${row1}\n${row2}`);
+  assert.equal(seg.error, undefined);
+  assert.ok(seg.rows.every(rowMatched));
+
+  const byChar = new Map<string, Piece>();
+  seg.rows.forEach((r) => r.letters.forEach((ch, i) => byChar.set(ch, r.pieces[i])));
+
+  const d = byChar.get('d')!;
+  assert.ok(d.y1 - d.y0 + 1 >= 38, `d retains full ascender height (got ${d.y1 - d.y0 + 1})`);
+  const f = byChar.get('f')!;
+  assert.ok(f.y1 - f.y0 + 1 >= 52, `f retains full descender height (got ${f.y1 - f.y0 + 1})`);
+  const j = byChar.get('j')!;
+  assert.ok(j.y1 - j.y0 + 1 >= 50, `j retains dot, stem and hook (got ${j.y1 - j.y0 + 1})`);
+  const p = byChar.get('p')!;
+  assert.ok(p.y1 - p.y0 + 1 >= 44, `p retains full descender stem (got ${p.y1 - p.y0 + 1})`);
+  const q = byChar.get('q')!;
+  assert.ok(q.y1 - q.y0 + 1 >= 45, `q retains full descender stem and tail (got ${q.y1 - q.y0 + 1})`);
 });
