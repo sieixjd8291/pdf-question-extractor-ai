@@ -31,6 +31,8 @@ export interface LetterSpec {
   c: string;
   spaceBefore: boolean;
   lineStart: boolean;
+  /** Target visual row index when typed line count matches ink row count. */
+  row?: number;
   /** Where the AI saw this character, in pixels. */
   hint?: { cx: number; cy: number };
 }
@@ -192,6 +194,7 @@ function runDp(
     // start the next letter; it is either part of that ink or a stray.
     if (atoms[i].x1 <= reach[i]) c += 2.5;
     const g = (atoms[i].x0 - reach[i]) / s;
+    if (g < 0) c += Math.min(2.5, -g * 1.8);
     if (l.spaceBefore || l.lineStart) c += 1.2 * Math.max(0, 0.45 - g);
     else c += 0.5 * Math.max(0, g - 1.2);
     return c;
@@ -238,11 +241,12 @@ function runDp(
     const jTo = Math.min(N, center + band);
 
     // Groups of 1-4 neighbouring atoms starting at i don't depend on the letter.
-    const groups: { n: number; box: Box; gapCost: number; areas: number[]; area: number }[] = [];
+    const groups: { n: number; box: Box; gapCost: number; areas: number[]; area: number; maxGap: number }[] = [];
     if (i < K) {
       let box: Box = { x0: atoms[i].x0, x1: atoms[i].x1, y0: atoms[i].y0, y1: atoms[i].y1 };
       let area = atoms[i].area;
       let gapCost = 0;
+      let maxGap = -Infinity;
       for (let n = 1; n <= 4 && i + n <= K; n++) {
         if (n > 1) {
           const a = atoms[i + n - 1];
@@ -253,12 +257,13 @@ function runDp(
           let near = Infinity;
           for (let t = i; t < i + n - 1; t++) near = Math.min(near, verticalGap(atoms[t], a));
           if (near > 0.6 * s) break;
+          maxGap = Math.max(maxGap, gap);
           gapCost += 1.0 * Math.max(0, gap - 0.25);
           box = { x0: Math.min(box.x0, a.x0), x1: Math.max(box.x1, a.x1), y0: Math.min(box.y0, a.y0), y1: Math.max(box.y1, a.y1) };
           area += a.area;
         }
         const areas = atoms.slice(i, i + n).map((a) => a.area).sort((p, q) => p - q);
-        groups.push({ n, box, gapCost, areas, area });
+        groups.push({ n, box, gapCost, areas, area, maxGap });
       }
     }
     const overlapping = i + 1 < K && atoms[i + 1].row === atoms[i].row && atoms[i + 1].x0 - atoms[i].x1 <= 0.3 * s &&
@@ -270,6 +275,7 @@ function runDp(
       if (i < K) relax((i + 1) * S + j, here + skipAtom[i], 1, 1);
       if (j < N) relax(i * S + j + 1, here + SKIP_LETTER, 2, 1);
       if (i === K || j === N) continue;
+      if (letters[j].row !== undefined && atoms[i].row !== letters[j].row) continue;
       const join = joinCost(i, j);
 
       // One letter from n neighbouring atoms of the same row.
@@ -278,8 +284,11 @@ function runDp(
         let strokeCost = 0;
         if (g.n < strokes) strokeCost = 0.9 * (strokes - g.n);
         else {
-          // Extra small marks (dots, accents, broken bits) are cheap; extra letters are not.
-          for (let t = strokes; t < g.n; t++) strokeCost += g.areas[t - strokes] < g.area * 0.25 ? 0.35 : 0.9;
+          // Extra small marks (dots, accents, broken bits) or overlapping strokes of one glyph are cheap.
+          const fitsOne = g.maxGap <= 0.25 && (g.box.x1 - g.box.x0 + 1) <= priors[j][2] * s * 1.4;
+          for (let t = strokes; t < g.n; t++) {
+            strokeCost += g.areas[t - strokes] < g.area * 0.25 || g.maxGap <= 0.05 ? 0.2 : fitsOne ? 0.35 : 0.9;
+          }
         }
         const c = here + join + g.gapCost + strokeCost + glyphCost(g.box, atoms[i].row, j, letters, priors, geo);
         relax((i + g.n) * S + j + 1, c, 3, g.n);
@@ -295,11 +304,14 @@ function runDp(
         let strokes = priors[j][3];
         for (let m = 2; m <= MAX_JOINED && j + m <= N; m++) {
           if (letters[j + m - 1].lineStart) break;
+          if (letters[j + m - 1].row !== undefined && letters[j + m - 1].row !== a.row) break;
           expected += priors[j + m - 1][2];
           strokes += priors[j + m - 1][3];
           const ratio = aw / (expected * s);
           if (ratio < MIN_SPLIT_RATIO) break;
           if (ratio > MAX_SPLIT_RATIO) continue;
+          const hasSpaceSplit = letters.slice(j + 1, j + m).some((l) => l.spaceBefore);
+          if (hasSpaceSplit && ratio < 0.78) continue;
           const to = (i + n) * S + j + m;
           // Fixed cost plus the width misfit of the whole run is a lower bound.
           const floor = here + join + SPLIT_BASE * (m - 1) + 0.5 * Math.log(ratio) ** 2;
@@ -309,7 +321,7 @@ function runDp(
           let c = here + join + SPLIT_BASE * (m - 1) + split.ink * 1.5 + 0.9 * Math.max(0, n - strokes);
           for (let t = 0; t < m; t++) {
             c += glyphCost(split.boxes[t], a.row, j + t, letters, priors, geo);
-            if (t > 0 && letters[j + t].spaceBefore) c += 0.6;
+            if (t > 0 && letters[j + t].spaceBefore) c += 1.35;
           }
           relax(to, c, 4, n * 16 + m);
         }

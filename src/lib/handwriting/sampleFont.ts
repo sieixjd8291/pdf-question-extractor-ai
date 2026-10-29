@@ -231,17 +231,24 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     let runStart = -1;
     let lastInkX = -1;
     let inkCols = 0;
+    let selfCols = 0;
     let thinCols = 0;
     const flushHoriz = (endX: number) => {
       const span = endX - runStart;
-      if (runStart >= 0 && span >= minHorizSpan && inkCols >= span * 0.68 && thinCols >= span * 0.48) {
+      if (runStart >= 0 && span >= minHorizSpan && selfCols >= span * 0.45 && inkCols >= span * 0.68 && thinCols >= span * 0.48) {
         for (let xx = runStart; xx < endX; xx++) {
           for (let dy = -1; dy <= 1; dy++) {
             const yy = y + dy;
-            if (yy < 0 || yy >= h) continue;
-            horizGrid[yy * w + xx] = 1;
-            if (labels[yy * w + xx] === -1 && vertThickAt(xx, yy) <= maxThick) {
-              drop[yy * w + xx] = 1;
+            if (yy >= 0 && yy < h && isLine(yy * w + xx)) horizGrid[yy * w + xx] = 1;
+          }
+          if (labels[y * w + xx] === -1 && vertThickAt(xx, y) <= maxThick) {
+            drop[y * w + xx] = 1;
+          } else if (!isLine(y * w + xx)) {
+            for (const dy of [-1, 1]) {
+              const yy = y + dy;
+              if (yy >= 0 && yy < h && labels[yy * w + xx] === -1 && vertThickAt(xx, yy) <= maxThick) {
+                drop[yy * w + xx] = 1;
+              }
             }
           }
         }
@@ -249,12 +256,14 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
       runStart = -1;
       lastInkX = -1;
       inkCols = 0;
+      selfCols = 0;
       thinCols = 0;
     };
 
     for (let x = 0; x < w; x++) {
       let hasNear = false;
       let thinNear = false;
+      const selfHas = isLine(y * w + x);
       for (let dy = -1; dy <= 1; dy++) {
         const yy = y + dy;
         if (yy < 0 || yy >= h) continue;
@@ -267,6 +276,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         if (runStart < 0) runStart = x;
         lastInkX = x;
         inkCols++;
+        if (selfHas) selfCols++;
         if (thinNear) thinCols++;
       } else if (runStart >= 0 && x - lastInkX > maxHorizGap) {
         flushHoriz(lastInkX + 1);
@@ -278,12 +288,13 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
   // 2) Detect rectangular section-header badges / folder tabs (e.g. "[Uppercase Letters]",
   // "[Lowercase Letters]", "[Numbers]", "[Punctuation & Symbols]") and erase both the box
   // and the small printed label words inside it so they are never read as glyphs.
-  const minBadgeW = Math.max(30, Math.round(w * 0.04));
-  const maxBadgeW = Math.round(w * 0.48);
+  const minBadgeW = Math.max(28, Math.round(w * 0.04));
+  const maxBadgeW = Math.round(w * 0.52);
   const minBadgeH = Math.max(10, Math.min(18, pen * 3));
-  const maxBadgeH = Math.max(32, Math.round(h * 0.08));
+  const maxBadgeH = Math.max(36, Math.round(h * 0.1));
   const badgeCut = Math.min(234, gridCut + 12);
   const isBadge = (idx: number) => labels[idx] === -1 || gray[idx] <= badgeCut;
+  const badgeInterior = new Uint8Array(w * h);
   for (let yTop = 0; yTop < h - minBadgeH; yTop++) {
     let x = 0;
     while (x < w - minBadgeW) {
@@ -307,36 +318,49 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         }
       }
       const bw = xEnd - x;
-      // Only isolated header tabs/boxes sitting directly on a horizontal table border qualify.
+      // Only isolated header tabs/boxes sitting directly on (or just above) a horizontal table border qualify.
       if (bw >= minBadgeW && bw <= maxBadgeW && thin >= bw * 0.65 && !horizGrid[yTop * w + x + (bw >> 1)]) {
         for (let yBot = yTop + minBadgeH; yBot <= Math.min(h - 1, yTop + maxBadgeH); yBot++) {
           const bh = yBot - yTop;
-          if (bw < bh * 1.75) continue;
-          // Bottom border of a section-header tab is shared with the table's top horizontal grid line.
-          let botGrid = 0;
-          for (let xx = x; xx < xEnd; xx++) {
-            if (horizGrid[yBot * w + xx]) botGrid++;
+          if (bw < bh * 1.7) continue;
+          const botGridCount = (yy: number) => {
+            let c = 0;
+            for (let xx = x; xx < xEnd; xx++) if (horizGrid[yy * w + xx]) c++;
+            return c;
+          };
+          if (botGridCount(yBot) < bw * 0.62) continue;
+          while (yBot + 1 <= Math.min(h - 1, yTop + maxBadgeH) && botGridCount(yBot + 1) >= bw * 0.62) {
+            yBot++;
           }
-          if (botGrid < bw * 0.65) continue;
-          let leftWall = 0;
-          let rightWall = 0;
-          for (let yy = yTop; yy <= yBot; yy++) {
-            for (let dx = -2; dx <= 2; dx++) {
-              const lx = x + dx;
-              if (lx >= 0 && lx < w && isBadge(yy * w + lx)) { leftWall++; break; }
+          const finalBh = yBot - yTop;
+          let bestLeft = 0;
+          let xLeft = x;
+          for (let lx = Math.max(0, x - 6); lx <= Math.min(w - 1, x + 3); lx++) {
+            let cnt = 0;
+            for (let yy = yTop + 1; yy <= yBot; yy++) {
+              if (isBadge(yy * w + lx) || (lx > 0 && isBadge(yy * w + lx - 1)) || (lx + 1 < w && isBadge(yy * w + lx + 1))) cnt++;
             }
-            for (let dx = -2; dx <= 2; dx++) {
-              const rx = xEnd - 1 + dx;
-              if (rx >= 0 && rx < w && isBadge(yy * w + rx)) { rightWall++; break; }
-            }
+            if (cnt > bestLeft) { bestLeft = cnt; xLeft = lx; }
           }
-          if (leftWall >= bh * 0.65 && rightWall >= bh * 0.65) {
-            for (let yy = Math.max(0, yTop - 2); yy < yBot; yy++) {
-              for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + 2); xx++) {
+          let bestRight = 0;
+          let xRight = xEnd - 1;
+          for (let rx = Math.max(0, xEnd - 4); rx <= Math.min(w - 1, xEnd + 5); rx++) {
+            let cnt = 0;
+            for (let yy = yTop + 1; yy <= yBot; yy++) {
+              if (isBadge(yy * w + rx) || (rx > 0 && isBadge(yy * w + rx - 1)) || (rx + 1 < w && isBadge(yy * w + rx + 1))) cnt++;
+            }
+            if (cnt > bestRight) { bestRight = cnt; xRight = rx; }
+          }
+          if (bestLeft >= finalBh * 0.6 && bestRight >= finalBh * 0.6) {
+            for (let yy = Math.max(0, yTop - 2); yy <= Math.min(h - 1, yBot + 1); yy++) {
+              for (let xx = Math.max(0, xLeft - 2); xx <= Math.min(w - 1, xRight + 2); xx++) {
                 drop[yy * w + xx] = 1;
+                if (yy < yBot - 1 && !horizGrid[yy * w + xx]) {
+                  badgeInterior[yy * w + xx] = 1;
+                }
               }
             }
-            for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + 2); xx++) {
+            for (let xx = Math.max(0, xLeft - 2); xx <= Math.min(w - 1, xRight + 2); xx++) {
               for (let dy = -1; dy <= 1; dy++) {
                 const yy = yBot + dy;
                 if (yy >= 0 && yy < h) horizGrid[yy * w + xx] = 1;
@@ -352,9 +376,8 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
 
   // Apply horizontal and badge removals to `labels` now so grid intersections (+ / T corners)
   // are no longer wide horizontally when vertical grid lines are measured in step 3.
-  const badgeDrop = new Uint8Array(drop);
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
-  const isVertLine = (idx: number) => !badgeDrop[idx] && isLine(idx);
+  const isVertLine = (idx: number) => !badgeInterior[idx] && isLine(idx);
 
   // 3) Vertical grid lines (cell dividers): erase columns that bridge directly between two
   // horizontal grid lines (or span a large share of the image height), keeping letter stems intact.
@@ -370,10 +393,10 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     return x1 - x0 + 1;
   };
   const touchesHorizNear = (x: number, y: number): boolean => {
-    for (let dy = -3; dy <= 3; dy++) {
+    for (let dy = -1; dy <= 1; dy++) {
       const yy = y + dy;
       if (yy < 0 || yy >= h) continue;
-      for (let dx = -2; dx <= 2; dx++) {
+      for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx;
         if (xx >= 0 && xx < w && horizGrid[yy * w + xx]) return true;
       }
@@ -385,29 +408,33 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     let runStart = -1;
     let lastInkY = -1;
     let inkRowsCount = 0;
+    let selfRowsCount = 0;
     let thinRowsCount = 0;
     const flushVert = (endY: number) => {
       const span = endY - runStart;
-      if (runStart >= 0 && span >= minVertSpan && inkRowsCount >= span * 0.82 && thinRowsCount >= span * 0.72) {
+      if (runStart >= 0 && span >= minVertSpan && selfRowsCount >= span * 0.55 && inkRowsCount >= span * 0.82 && thinRowsCount >= span * 0.72) {
         const topTouch = touchesHorizNear(x, runStart);
         const botTouch = touchesHorizNear(x, endY - 1);
         let wideInterior = 0;
-        const innerY0 = runStart + maxThick + 1;
-        const innerY1 = endY - 1 - maxThick - 1;
-        const innerSpan = Math.max(1, innerY1 - innerY0 + 1);
-        for (let yy = innerY0; yy <= innerY1; yy++) {
-          if (!horizGrid[yy * w + x] && wideHorizAt(x, yy) > maxThick + 2) wideInterior++;
+        let interiorRows = 0;
+        for (let yy = runStart; yy < endY; yy++) {
+          if (touchesHorizNear(x, yy)) continue;
+          interiorRows++;
+          if (wideHorizAt(x, yy) > maxThick + 2) wideInterior++;
         }
-        const isUnbranched = wideInterior <= innerSpan * 0.12;
-        const isCellWall = topTouch && botTouch && isUnbranched;
-        const isLongBorder = span >= veryTallRun && (topTouch || botTouch) && thinRowsCount >= span * 0.85 && isUnbranched;
+        const innerSpan = Math.max(1, interiorRows);
+        const isCellWall = topTouch && botTouch && wideInterior <= Math.max(1, Math.round(innerSpan * 0.03));
+        const isLongBorder = span >= veryTallRun && (topTouch || botTouch) && thinRowsCount >= span * 0.85 && wideInterior <= Math.max(2, Math.round(innerSpan * 0.05));
         if (isCellWall || isLongBorder) {
           for (let yy = runStart; yy < endY; yy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const xx = x + dx;
-              if (xx < 0 || xx >= w) continue;
-              if (labels[yy * w + xx] === -1 && horizThickAt(xx, yy) <= maxThick) {
-                drop[yy * w + xx] = 1;
+            if (labels[yy * w + x] === -1 && horizThickAt(x, yy) <= maxThick) {
+              drop[yy * w + x] = 1;
+            } else if (!isVertLine(yy * w + x)) {
+              for (const dx of [-1, 1]) {
+                const xx = x + dx;
+                if (xx >= 0 && xx < w && labels[yy * w + xx] === -1 && horizThickAt(xx, yy) <= maxThick) {
+                  drop[yy * w + xx] = 1;
+                }
               }
             }
           }
@@ -416,12 +443,14 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
       runStart = -1;
       lastInkY = -1;
       inkRowsCount = 0;
+      selfRowsCount = 0;
       thinRowsCount = 0;
     };
 
     for (let y = 0; y < h; y++) {
       let hasNear = false;
       let thinNear = false;
+      const selfHas = isVertLine(y * w + x);
       for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx;
         if (xx < 0 || xx >= w) continue;
@@ -434,6 +463,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         if (runStart < 0) runStart = y;
         lastInkY = y;
         inkRowsCount++;
+        if (selfHas) selfRowsCount++;
         if (thinNear) thinRowsCount++;
       } else if (runStart >= 0 && y - lastInkY > maxVertGap) {
         flushVert(lastInkY + 1);
@@ -765,17 +795,23 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
       const q = out[j];
       if (j === i || q.area < p.area * 1.8) continue;
       const qh = q.y1 - q.y0 + 1;
-      if (p.y1 > q.y0 + qh * 0.35) continue;
-      // An i dot floats just above its stem; a mark far higher is a stray pen tick.
-      if (q.y0 - p.y1 > stackGap) continue;
-      if (Math.min(...p.parts.flatMap((pp) => q.parts.map((qp) => inkGap(ink, pp.comp, qp.comp)))) > stackGap) continue;
+      const isTopMark = p.y1 <= q.y0 + qh * 0.35;
       const gap = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1));
-      // Among touching candidates, the one most directly below the mark wins.
+      const minInkDist = Math.min(...p.parts.flatMap((pp) => q.parts.map((qp) => inkGap(ink, pp.comp, qp.comp))));
+      if (isTopMark) {
+        // An i dot floats just above its stem; a mark far higher is a stray pen tick.
+        if (q.y0 - p.y1 > stackGap || minInkDist > stackGap) continue;
+        if (gap > maxGap) continue;
+      } else {
+        // Detached crossbar, hook, or tail touching or overlapping the glyph's stem/body.
+        if (gap > 1 || minInkDist > 3 || p.y0 > q.y1 + 3) continue;
+      }
+      // Among touching candidates, the one most directly aligned with the mark wins.
       const overlap = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) + 1) / (p.x1 - p.x0 + 1);
       const centerDist = Math.abs((p.x0 + p.x1) / 2 - (q.x0 + q.x1) / 2) / ((q.x1 - q.x0 + 1) * 4)
         // A dot beside a tall letter's top (f, l) is less likely its own than one above a stem.
-        + Math.max(0, (p.y1 - q.y0) / qh) * 2;
-      if (gap <= maxGap && gap - overlap + centerDist < bestGap) {
+        + (isTopMark ? Math.max(0, (p.y1 - q.y0) / qh) * 2 : 0);
+      if (gap - overlap + centerDist < bestGap) {
         bestGap = gap - overlap + centerDist;
         best = j;
       }
@@ -788,39 +824,44 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
   return out.sort((a, b) => a.x0 - b.x0);
 }
 
-export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideBySide = false, band?: Band): Piece[] {
+export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideBySide = false, band?: Band, sharedIds?: Set<number>): Piece[] {
   const comps = compIds
     .map((id) => {
       const raw = ink.components[id - 1];
-      const y0 = band ? Math.max(raw.y0, band.y0) : raw.y0;
-      const y1 = band ? Math.min(raw.y1, band.y1) : raw.y1;
-      return { id, c: { ...raw, y0, y1 } };
+      const clip = band && (!sharedIds || sharedIds.has(id));
+      const y0 = clip ? Math.max(raw.y0, band.y0) : raw.y0;
+      const y1 = clip ? Math.min(raw.y1, band.y1) : raw.y1;
+      return { id, clip: Boolean(clip), c: { ...raw, y0, y1 } };
     })
     .filter((p) => p.c.y1 >= p.c.y0)
     .sort((p, q) => p.c.x0 - q.c.x0);
   const parent = comps.map((_, i) => i);
   const stackGap = stackedGapLimit(comps.map((p) => p.c));
   const medH = median(comps.map((p) => p.c.y1 - p.c.y0 + 1)) || 1;
+  const medW = median(comps.map((p) => p.c.x1 - p.c.x0 + 1)) || 1;
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (let i = 0; i < comps.length; i++) {
     const a = comps[i].c;
+    const aw = a.x1 - a.x0 + 1;
     const ah = a.y1 - a.y0 + 1;
     for (let j = i + 1; j < comps.length; j++) {
       const b = comps[j].c;
       if (b.x0 > a.x1) break;
+      const bw = b.x1 - b.x0 + 1;
       const bh = b.y1 - b.y0 + 1;
       const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
-      const narrower = Math.min(a.x1 - a.x0, b.x1 - b.x0) + 1;
-      // Only strokes stacked above each other (i dots, : ; ! ? =) are one glyph for
-      // sure; side-by-side strokes (an f bar over the next stem) stay apart and the
-      // matcher decides whether they belong together. Never stack two full-height
-      // letters from different rows into one double-decker glyph.
+      const narrower = Math.min(aw, bw);
+      const wider = Math.max(aw, bw);
+      const combinedW = Math.max(a.x1, b.x1) - Math.min(a.x0, b.x0) + 1;
+      // Only strokes stacked above each other (i dots, : ; ! ? =) or overlapping strokes of one
+      // character (crossbar/hook on a stem) merge immediately; side-by-side strokes stay apart.
       const vOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
       const shorter = Math.min(ah, bh);
       const combinedH = Math.max(a.y1, b.y1) - Math.min(a.y0, b.y0) + 1;
       if (vOverlap < shorter * 0.25 && ah >= medH * 0.6 && bh >= medH * 0.6 && combinedH > medH * 1.45) continue;
       if (-vOverlap > stackGap || (vOverlap <= 0 && inkGap(ink, comps[i].id, comps[j].id) > stackGap)) continue;
-      if (overlap > narrower * 0.5 && (!splitSideBySide || vOverlap < shorter * 0.4)) parent[find(j)] = find(i);
+      const sameGlyphOverlap = overlap >= wider * 0.6 && combinedW <= medW * 1.35 && inkGap(ink, comps[i].id, comps[j].id) <= 3;
+      if (overlap > narrower * 0.5 && (!splitSideBySide || vOverlap < shorter * 0.4 || sameGlyphOverlap)) parent[find(j)] = find(i);
     }
   }
   const groups = new Map<number, PiecePart[]>();
@@ -831,7 +872,7 @@ export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideB
       comp: p.id,
       cut0: -Infinity,
       cut1: Infinity,
-      ...(band ? { cutY0: band.y0, cutY1: band.y1 + 1 } : {}),
+      ...(p.clip && band ? { cutY0: band.y0, cutY1: band.y1 + 1 } : {}),
     });
     groups.set(root, list);
   });
@@ -1019,16 +1060,18 @@ function inkRows(ink: InkMap, text: string): Piece[][] | null {
     const c = ink.components[id - 1];
     const ch = c.y1 - c.y0 + 1;
     // If a tall stroke or unsevered border bridges multiple bands, let each band claim its vertical slice.
-    if (bands.length > 1 && ch > medCompH * 1.65) {
-      let claimed = false;
+    if (bands.length > 1 && ch > medCompH * 2.15) {
+      const matchedBands: number[] = [];
       bands.forEach((b, i) => {
         const ov = Math.min(c.y1, b.y1) - Math.max(c.y0, b.y0) + 1;
-        if (ov >= Math.min(medCompH * 0.45, (b.y1 - b.y0 + 1) * 0.45)) {
-          buckets[i].push(id);
-          claimed = true;
+        if (ov >= Math.min(medCompH * 0.55, (b.y1 - b.y0 + 1) * 0.5)) {
+          matchedBands.push(i);
         }
       });
-      if (claimed) continue;
+      if (matchedBands.length >= 2) {
+        matchedBands.forEach((i) => buckets[i].push(id));
+        continue;
+      }
     }
     const cy = centroid[id];
     let row = 0;
@@ -1043,7 +1086,7 @@ function inkRows(ink: InkMap, text: string): Piece[][] | null {
     buckets[row].push(id);
   }
 
-  // Only pass vertical band clip when a component was shared across multiple bands.
+  // Only pass vertical band clip for the specific component IDs shared across multiple bands.
   const sharedIds = new Set<number>();
   const seenIds = new Set<number>();
   for (const ids of buckets) {
@@ -1053,7 +1096,7 @@ function inkRows(ink: InkMap, text: string): Piece[][] | null {
     }
   }
   const rows = buckets.map((ids, i) =>
-    clusterRow(ink, ids, text, true, ids.some((id) => sharedIds.has(id)) ? bands[i] : undefined),
+    clusterRow(ink, ids, text, true, ids.some((id) => sharedIds.has(id)) ? bands[i] : undefined, sharedIds),
   );
   // Ruling lines and underlines: long, flat strokes spanning many letters.
   const widthMedian = median(rows.flat().map((p) => p.x1 - p.x0 + 1)) || 1;
@@ -1088,11 +1131,19 @@ function atomFeature(ink: InkMap, piece: Piece, row: number): AtomFeat {
   return { row, x0: piece.x0, x1: piece.x1, y0: piece.y0, y1: piece.y1, area: piece.area, cols, colTop, colBot, peak };
 }
 
-function letterSpecs(lines: string[]): LetterSpec[] {
+function letterSpecs(lines: string[], rowCount?: number): LetterSpec[] {
   const out: LetterSpec[] = [];
-  lines.forEach((line) => {
+  const lockRows = rowCount !== undefined && rowCount === lines.length;
+  lines.forEach((line, lineIdx) => {
     line.split(/\s+/).filter(Boolean).forEach((word, wi) => {
-      Array.from(word).forEach((c, ci) => out.push({ c, spaceBefore: ci === 0 && wi > 0, lineStart: ci === 0 && wi === 0 }));
+      Array.from(word).forEach((c, ci) =>
+        out.push({
+          c,
+          spaceBefore: ci === 0 && wi > 0,
+          lineStart: ci === 0 && wi === 0,
+          ...(lockRows ? { row: lineIdx } : {}),
+        }),
+      );
     });
   });
   return out;
@@ -1167,7 +1218,7 @@ export function segmentSample(ink: InkMap, text: string): Segmentation {
   if (!lines.length) return { rows: [], error: 'Type the text that appears in the image.' };
   const rows = inkRows(ink, text);
   if (!rows) return { rows: [], error: 'No handwriting was found in this image.' };
-  return matchLetters(ink, rows, letterSpecs(lines));
+  return matchLetters(ink, rows, letterSpecs(lines, rows.length));
 }
 
 /** One character located by the AI; box is [x0, y0, x1, y1] as fractions of the image. */
@@ -1408,6 +1459,8 @@ function normalizeSymbolTokens(line: string, targetCount?: number): string {
   return newDiff <= origDiff ? replaced : line;
 }
 
+const SECTION_HEADER_RE = /^(uppercase(\s+letters)?|lowercase(\s+letters)?|numbers|digits|punctuation(\s*(&|and)\s*symbols)?|symbols|math(\s*\/\s*special\s*glyphs)?|special\s+glyphs|ligatures|sample\s+text|pangrams?)$/i;
+
 /**
  * Recognizes standard handwriting glyph sheet templates (full 7-row sheets or cropped
  * sections of Uppercase, Lowercase, Numbers, and Punctuation & Symbols) directly from
@@ -1428,42 +1481,82 @@ export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string
     [...upper13, ...lower13],
     [upper13[1], ...lower13, digits10],
     [...lower13, digits10, punct1, punct2a],
+    [...lower13, digits10, punct1, punct2b],
     [...upper13, digits10],
     [...lower13, digits10],
+    [...upper13],
+    [...lower13],
+    [digits10, punct1, punct2a],
+    [digits10, punct1, punct2b],
+    [punct1, punct2a],
+    [punct1, punct2b],
   ];
 
   // Quick row-band count check so we only evaluate candidates matching the image's line count.
   const bandCheck = inkRows(ink, '1\n2\n3\n4\n5\n6\n7');
   if (!bandCheck || bandCheck.length < 2) return null;
 
+  let bestResult: (Segmentation & { text: string }) | null = null;
+  let bestScore = -Infinity;
+
   for (const lines of candidates) {
+    if (lines.length !== bandCheck.length) continue;
     const rows = inkRows(ink, lines.join('\n'));
     if (!rows || rows.length !== lines.length) continue;
     // Verify each row's atom count is close to the template row's glyph count before full DP.
+    let atomDiff = 0;
     const countsMatch = rows.every((r, idx) => {
       const target = lettersOf(lines[idx]).length;
-      return r.length >= target - 1 && r.length <= target + 8;
+      atomDiff += Math.abs(r.length - target);
+      return r.length >= target - 3 && r.length <= target + 9;
     });
     if (!countsMatch) continue;
     const text = lines.join('\n');
     const seg = segmentSample(ink, text);
-    if (!seg.error && seg.rows.length === lines.length && seg.rows.every(rowMatched)) {
-      return { ...seg, text };
+    if (seg.error || seg.rows.length !== lines.length || !seg.rows.every(rowMatched)) continue;
+    const totalExpected = lines.reduce((n, l) => n + lettersOf(l).length, 0);
+    const missingCount = seg.missing?.length ?? 0;
+    if (missingCount > Math.max(2, Math.floor(totalExpected * 0.06))) continue;
+    const matchedCount = seg.rows.reduce((n, r) => n + r.letters.length, 0);
+    const score = matchedCount * 20 - missingCount * 50 - atomDiff * 5;
+    if (score > bestScore) {
+      bestScore = score;
+      bestResult = { ...seg, text };
     }
   }
-  return null;
+  return bestResult;
 }
 
 export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
-  const prelimRows = inkRows(ink, aiLines.map((l) => l.text).join('\n')) ?? [];
-  const lines = aiLines
-    .map((l, idx) => ({ ...l, text: normalizeSymbolTokens(l.text.trim(), prelimRows[idx]?.length) }))
+  const cleanedAiLines = aiLines.filter((l) => l.text.trim() && !SECTION_HEADER_RE.test(l.text.trim()));
+  const baseLines = cleanedAiLines.length ? cleanedAiLines : aiLines.filter((l) => l.text.trim());
+  const prelimRows = inkRows(ink, baseLines.map((l) => l.text).join('\n')) ?? [];
+  const expandedLines: AiLine[] = [];
+  baseLines.forEach((l) => {
+    const trimmed = l.text.trim();
+    const charsOnly = lettersOf(trimmed).join('');
+    if (
+      (charsOnly === 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' || charsOnly === 'abcdefghijklmnopqrstuvwxyz') &&
+      prelimRows.length > baseLines.length &&
+      (!l.chars || l.chars.length === 0)
+    ) {
+      expandedLines.push(
+        { text: Array.from(charsOnly.slice(0, 13)).join(' '), chars: [] },
+        { text: Array.from(charsOnly.slice(13)).join(' '), chars: [] },
+      );
+    } else {
+      expandedLines.push(l);
+    }
+  });
+  const finalRows = inkRows(ink, expandedLines.map((l) => l.text).join('\n')) ?? prelimRows;
+  const lines = expandedLines
+    .map((l, idx) => ({ ...l, text: normalizeSymbolTokens(l.text.trim(), finalRows[idx]?.length) }))
     .filter((l) => l.text);
   const text = lines.map((l) => l.text).join('\n');
   if (!lines.length) return { rows: [], error: 'AI did not find any characters.', text, source: 'text' };
   const rows = inkRows(ink, text);
   if (!rows) return { rows: [], error: 'No handwriting was found in this image.', text, source: 'text' };
-  const letters = letterSpecs(lines.map((l) => l.text.trim()));
+  const letters = letterSpecs(lines.map((l) => l.text.trim()), rows.length);
   const keep: boolean[] = [];
   const raw: ({ cx: number; cy: number; line: number } | undefined)[] = [];
   lines.forEach((line, lineNo) => {
@@ -1480,8 +1573,12 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   if (!raw.some(Boolean)) {
     const matched = matchLetters(ink, rows, letters, keep);
     const tmpl = detectGlyphTemplate(ink);
-    if (tmpl && tmpl.rows.filter(rowMatched).length > matched.rows.filter(rowMatched).length) {
-      return { ...tmpl, source: 'text' };
+    if (tmpl) {
+      const matchedGlyphs = matched.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0) - (matched.missing?.length ?? 0) * 2;
+      const tmplGlyphs = tmpl.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0) - (tmpl.missing?.length ?? 0) * 2;
+      if (matched.error || tmplGlyphs > matchedGlyphs) {
+        return { ...tmpl, source: 'text' };
+      }
     }
     return { ...matched, text, source: 'text' };
   }
@@ -1780,7 +1877,7 @@ export async function buildFontFromSamples(familyName: string, samples: SampleIn
     const traced = tracer.imagedataToTracedata({ width: gw, height: gh, data }, {
       ltres: 0.8,
       qtres: 0.8,
-      pathomit: 4,
+      pathomit: piece.area < 25 ? 0 : 2,
       rightangleenhance: false,
       colorsampling: 0,
       numberofcolors: 2,
