@@ -278,21 +278,28 @@ test('a glyph sheet with table grid borders, hollow section frames and colored b
   const W = 800;
   const H = 360;
   const rects: Rect[] = [];
-  // Hollow section header frame at top
-  rects.push([30, 12, 160, 2], [30, 34, 160, 2], [30, 12, 2, 24], [188, 12, 2, 24]);
+  // Section header tab "[Uppercase]" with text strokes inside it sitting on top of the A-Z table
+  rects.push([30, 21, 130, 2], [30, 45, 130, 2], [30, 21, 2, 26], [158, 21, 2, 26]);
+  rects.push([42, 27, 14, 11], [62, 27, 18, 11], [86, 27, 22, 11]); // fake header words inside tab
 
-  // 2x13 grid for A-M and N-Z with full horizontal and vertical grid lines
+  // 2x13 grid for A-M and N-Z with full horizontal and vertical grid lines (with small anti-alias gaps)
   const gx0 = 30;
   const gy0 = 45;
   const cellW = 55;
   const cellH = 55;
   const cols = 13;
   const gridW = cols * cellW;
-  for (let r = 0; r <= 2; r++) rects.push([gx0, gy0 + r * cellH, gridW, 2]);
+  for (let r = 0; r <= 2; r++) {
+    rects.push([gx0, gy0 + r * cellH, 320, 2], [gx0 + 324, gy0 + r * cellH, gridW - 324, 2]);
+  }
   for (let c = 0; c <= cols; c++) rects.push([gx0 + c * cellW, gy0, 2, cellH * 2]);
 
-  // 1x10 grid for 0-9 below
+  // Section header tab "[Numbers]" with fake "Num" and "bers" words inside it sitting on top of 0-9 table
   const ny0 = 195;
+  rects.push([30, ny0 - 22, 110, 2], [30, ny0, 110, 2], [30, ny0 - 22, 2, 24], [138, ny0 - 22, 2, 24]);
+  rects.push([40, ny0 - 16, 28, 11], [74, ny0 - 16, 32, 11]); // "Num" and "bers" inside badge
+
+  // 1x10 grid for 0-9 below
   const nCellW = 65;
   const nGridW = 10 * nCellW;
   for (let r = 0; r <= 1; r++) rects.push([gx0, ny0 + r * cellH, nGridW, 2]);
@@ -324,20 +331,26 @@ test('a glyph sheet with table grid borders, hollow section frames and colored b
   });
 
   const img = image(W, H, rects);
-  // Paint a colored pill badge above the numbers grid
-  for (let y = 165; y < 188; y++) {
-    for (let x = 30; x < 150; x++) {
-      const o = (y * W + x) * 4;
-      img.data[o] = 45; img.data[o + 1] = 110; img.data[o + 2] = 220;
+  // Make the 0-9 table grid lines fluctuate in light-grey brightness (165..215) across Otsu's
+  // threshold so only sporadic segments binarize directly, testing grey-aware grid removal.
+  for (let r = 0; r <= 1; r++) {
+    for (let dy = 0; dy < 2; dy++) {
+      for (let x = gx0; x < gx0 + nGridW; x++) {
+        const o = ((ny0 + r * cellH + dy) * W + x) * 4;
+        const g = (x % 9 < 4) ? 175 : 212;
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = g;
+      }
     }
   }
 
   const ink = buildInkMap(img);
-  // Both text-only segmentation and AI-assisted segmentation must match all 36 characters cleanly
+  // Both text-only segmentation and AI-assisted segmentation must match all 36 characters cleanly,
+  // and no piece may span across two rows (no A+N double-height boxes).
   const textSeg = segmentSample(ink, `${upper1}\n${upper2}\n${digits}`);
   assert.equal(textSeg.error, undefined);
   assert.deepEqual(textSeg.rows.map((r) => r.letters.join('')), [upper1, upper2, digits]);
   assert.ok(textSeg.rows.every(rowMatched));
+  assert.ok(textSeg.rows.flatMap((r) => r.pieces).every((p) => p.y1 - p.y0 + 1 <= 40), 'no multi-row pieces');
 
   const aiSeg = segmentWithAi(ink, [
     { text: upper1, chars: truth.slice(0, 13).map((t) => ({ c: t.c, box: t.box })) },
@@ -347,4 +360,5 @@ test('a glyph sheet with table grid borders, hollow section frames and colored b
   assert.equal(aiSeg.error, undefined);
   assert.equal(aiSeg.rows.reduce((s, r) => s + r.letters.length, 0), 36);
   assert.ok(aiSeg.rows.every(rowMatched));
+  assert.ok(aiSeg.rows.flatMap((r) => r.pieces).every((p) => p.y1 - p.y0 + 1 <= 40), 'no multi-row pieces in AI seg');
 });
