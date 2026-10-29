@@ -334,9 +334,10 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
             }
           }
           if (leftWall >= bh * 0.68 && rightWall >= bh * 0.68) {
-            for (let yy = Math.max(0, yTop - 2); yy <= Math.min(h - 1, yBot + maxThick); yy++) {
-              for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + maxThick); xx++) {
+            for (let yy = Math.max(0, yTop - 2); yy <= Math.min(h - 1, yBot + 2); yy++) {
+              for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, xEnd + 2); xx++) {
                 drop[yy * w + xx] = 1;
+                if (Math.abs(yy - yBot) <= 1) horizGrid[yy * w + xx] = 1;
               }
             }
             break;
@@ -351,16 +352,24 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
   // are no longer wide horizontally when vertical grid lines are measured in step 3.
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
 
-  // 3) Vertical grid lines (cell dividers): erase columns that bridge between horizontal
-  // grid lines or span a large share of the image height, keeping standalone 'I', 'l', '1', '|' intact.
-  const minVertSpan = Math.max(18, Math.round(h * 0.03));
-  const maxVertGap = Math.max(4, Math.round(h * 0.008));
+  // 3) Vertical grid lines (cell dividers): erase columns that bridge directly between two
+  // horizontal grid lines (or span a large share of the image height), keeping letter stems intact.
+  const minVertSpan = Math.max(22, Math.round(h * 0.035));
+  const maxVertGap = 2;
   const veryTallRun = Math.max(90, Math.round(h * 0.22));
+  const wideCheckLimit = maxThick * 3;
+  const wideHorizAt = (x: number, y: number): number => {
+    let x0 = x;
+    while (x0 > 0 && labels[y * w + (x0 - 1)] === -1 && x - (x0 - 1) <= wideCheckLimit) x0--;
+    let x1 = x;
+    while (x1 + 1 < w && labels[y * w + (x1 + 1)] === -1 && (x1 + 1) - x <= wideCheckLimit) x1++;
+    return x1 - x0 + 1;
+  };
   const touchesHorizNear = (x: number, y: number): boolean => {
-    for (let dy = -5; dy <= 5; dy++) {
+    for (let dy = -3; dy <= 3; dy++) {
       const yy = y + dy;
       if (yy < 0 || yy >= h) continue;
-      for (let dx = -3; dx <= 3; dx++) {
+      for (let dx = -2; dx <= 2; dx++) {
         const xx = x + dx;
         if (xx >= 0 && xx < w && horizGrid[yy * w + xx]) return true;
       }
@@ -373,14 +382,21 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     let lastInkY = -1;
     let inkRowsCount = 0;
     let thinRowsCount = 0;
-    let horizCrossings = 0;
     const flushVert = (endY: number) => {
       const span = endY - runStart;
-      if (runStart >= 0 && span >= minVertSpan && inkRowsCount >= span * 0.68 && thinRowsCount >= span * 0.55) {
+      if (runStart >= 0 && span >= minVertSpan && inkRowsCount >= span * 0.82 && thinRowsCount >= span * 0.72) {
         const topTouch = touchesHorizNear(x, runStart);
         const botTouch = touchesHorizNear(x, endY - 1);
-        const isCellWall = (topTouch && botTouch) || ( (topTouch || botTouch || horizCrossings > 0) && span >= Math.max(38, Math.round(h * 0.05)) );
-        const isLongBorder = span >= veryTallRun && thinRowsCount >= span * 0.82;
+        let wideInterior = 0;
+        const innerY0 = runStart + maxThick + 1;
+        const innerY1 = endY - 1 - maxThick - 1;
+        const innerSpan = Math.max(1, innerY1 - innerY0 + 1);
+        for (let yy = innerY0; yy <= innerY1; yy++) {
+          if (!horizGrid[yy * w + x] && wideHorizAt(x, yy) > maxThick + 2) wideInterior++;
+        }
+        const isUnbranched = wideInterior <= innerSpan * 0.12;
+        const isCellWall = topTouch && botTouch && isUnbranched;
+        const isLongBorder = span >= veryTallRun && thinRowsCount >= span * 0.85 && isUnbranched;
         if (isCellWall || isLongBorder) {
           for (let yy = runStart; yy < endY; yy++) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -397,7 +413,6 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
       lastInkY = -1;
       inkRowsCount = 0;
       thinRowsCount = 0;
-      horizCrossings = 0;
     };
 
     for (let y = 0; y < h; y++) {
@@ -416,7 +431,6 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         lastInkY = y;
         inkRowsCount++;
         if (thinNear) thinRowsCount++;
-        if (horizGrid[y * w + x]) horizCrossings++;
       } else if (runStart >= 0 && y - lastInkY > maxVertGap) {
         flushVert(lastInkY + 1);
       }
@@ -1317,7 +1331,7 @@ export function segmentFromBoxes(ink: InkMap, aiLines: AiLine[]): Segmentation {
       for (const m of lineMatches) assignToLine(m.line, true);
     } else {
       lineMatches.sort((a, b) => b.overlap - a.overlap);
-      assignToLine(lineMatches[0].line, ch > medianH * 1.55);
+      assignToLine(lineMatches[0].line, ch > medianH * 2.5);
     }
   });
 
@@ -1377,9 +1391,81 @@ function aiCharFor(letters: string[], chars: AiChar[]): (AiChar | undefined)[] {
  * and its per-character boxes pull each match toward where the AI saw it. The
  * ink itself still decides the exact cut, so loose AI boxes can't slice letters.
  */
+function normalizeSymbolTokens(line: string, targetCount?: number): string {
+  const replaced = line
+    .replace(/(^|\s)<=(?=\s|$)/g, '$1≤')
+    .replace(/(^|\s)>=(?=\s|$)/g, '$1≥')
+    .replace(/(^|\s)!=(?=\s|$)/g, '$1≠')
+    .replace(/(^|\s)TM(?=\s|$)/g, '$1™');
+  if (replaced === line) return line;
+  if (targetCount === undefined) return replaced;
+  const origDiff = Math.abs(lettersOf(line).length - targetCount);
+  const newDiff = Math.abs(lettersOf(replaced).length - targetCount);
+  return newDiff <= origDiff ? replaced : line;
+}
+
+/**
+ * Recognizes standard handwriting glyph sheet templates (full 7-row sheets or cropped
+ * sections of Uppercase, Lowercase, Numbers, and Punctuation & Symbols) directly from
+ * the ink layout when every row aligns cleanly.
+ */
+export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string }) | null {
+  const probe = inkRows(ink, '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12');
+  if (!probe || probe.length < 2 || probe.length > 9) return null;
+  const counts = probe.map((r) => r.length);
+  const is13 = (n: number) => n >= 11 && n <= 15;
+  const is26 = (n: number) => n >= 24 && n <= 28;
+  const is10 = (n: number) => n >= 9 && n <= 12;
+  const is20 = (n: number) => n >= 17 && n <= 23;
+
+  const upper13 = ['A B C D E F G H I J K L M', 'N O P Q R S T U V W X Y Z'];
+  const lower13 = ['a b c d e f g h i j k l m', 'n o p q r s t u v w x y z'];
+  const digits10 = '0 1 2 3 4 5 6 7 8 9';
+  const punct1 = '. , ; : ! ? \' " ( ) - _ / \\ | @ # $ % &';
+  const punct2 = (n: number) => (n === 19 ? '* + = < > ≤ ≥ ~ ^ ` [ ] { } , ₹ € ™ ®' : '* + = < > ≤ ≥ ~ ^ ` [ ] { } , . ₹ € ™ ®');
+
+  const lines: string[] = [];
+  let i = 0;
+  if (i + 3 < counts.length && is13(counts[i]) && is13(counts[i + 1]) && is13(counts[i + 2]) && is13(counts[i + 3])) {
+    lines.push(...upper13, ...lower13);
+    i += 4;
+  } else if (i + 2 < counts.length && is13(counts[i]) && is13(counts[i + 1]) && is13(counts[i + 2])) {
+    lines.push(upper13[1], ...lower13);
+    i += 3;
+  } else if (i + 1 < counts.length && is13(counts[i]) && is13(counts[i + 1])) {
+    const followedByDigits = i + 2 < counts.length && is10(counts[i + 2]);
+    lines.push(...(followedByDigits ? lower13 : upper13));
+    i += 2;
+  } else if (i + 1 < counts.length && is26(counts[i]) && is26(counts[i + 1])) {
+    lines.push('A B C D E F G H I J K L M N O P Q R S T U V W X Y Z', 'a b c d e f g h i j k l m n o p q r s t u v w x y z');
+    i += 2;
+  }
+  if (i < counts.length && is10(counts[i])) {
+    lines.push(digits10);
+    i++;
+  }
+  if (i < counts.length && is20(counts[i])) {
+    lines.push(punct1);
+    i++;
+  }
+  if (i < counts.length && is20(counts[i])) {
+    lines.push(punct2(counts[i]));
+    i++;
+  }
+  if (i !== counts.length || lines.length < 2) return null;
+
+  const text = lines.join('\n');
+  const seg = segmentSample(ink, text);
+  if (seg.error || seg.rows.length !== lines.length || !seg.rows.every(rowMatched)) return null;
+  return { ...seg, text };
+}
+
 export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { text: string; source: 'text' | 'boxes' } {
-  const lines = aiLines.filter((l) => l.text.trim());
-  const text = lines.map((l) => l.text.trim()).join('\n');
+  const prelimRows = inkRows(ink, aiLines.map((l) => l.text).join('\n')) ?? [];
+  const lines = aiLines
+    .map((l, idx) => ({ ...l, text: normalizeSymbolTokens(l.text.trim(), prelimRows[idx]?.length) }))
+    .filter((l) => l.text);
+  const text = lines.map((l) => l.text).join('\n');
   if (!lines.length) return { rows: [], error: 'AI did not find any characters.', text, source: 'text' };
   const rows = inkRows(ink, text);
   if (!rows) return { rows: [], error: 'No handwriting was found in this image.', text, source: 'text' };
@@ -1397,7 +1483,14 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
       raw.push({ cx: ((x0 + x1) / 2) * ink.width, cy: ((y0 + y1) / 2) * ink.height, line: lineNo });
     });
   });
-  if (!raw.some(Boolean)) return { ...matchLetters(ink, rows, letters, keep), text, source: 'text' };
+  if (!raw.some(Boolean)) {
+    const matched = matchLetters(ink, rows, letters, keep);
+    const tmpl = detectGlyphTemplate(ink);
+    if (tmpl && tmpl.rows.filter(rowMatched).length > matched.rows.filter(rowMatched).length) {
+      return { ...tmpl, source: 'text' };
+    }
+    return { ...matched, text, source: 'text' };
+  }
 
   // 1) Un-hinted global alignment + calibrated hints (handles shifted AI boxes on freeform text).
   const placed: { letter: number; piece: Piece }[] = [];
@@ -1424,7 +1517,7 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
         const p = r.pieces[i];
         unique.add(r.letters[i]);
         matchedCount++;
-        if (p.y1 - p.y0 + 1 > medH * 1.75) tallPenalty += 1500;
+        if (p.y1 - p.y0 + 1 > medH * 2.35) tallPenalty += 1500;
       }
     }
     let offRowPenalty = 0;
@@ -1782,10 +1875,10 @@ export async function loadSampleImage(file: File): Promise<{ ink: InkMap; url: s
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
   const ink = buildInkMap(ctx.getImageData(0, 0, w, h));
-  const aiScale = Math.min(1, 1600 / Math.max(w, h));
+  const aiScale = Math.min(1, 1200 / Math.max(w, h));
   const small = document.createElement('canvas');
   small.width = Math.max(1, Math.round(w * aiScale));
   small.height = Math.max(1, Math.round(h * aiScale));
   small.getContext('2d')!.drawImage(canvas, 0, 0, small.width, small.height);
-  return { ink, url, aiImage: small.toDataURL('image/jpeg', 0.9) };
+  return { ink, url, aiImage: small.toDataURL('image/jpeg', 0.85) };
 }

@@ -24,12 +24,10 @@ const Type = {
 } as const;
 
 export const GEMINI_MODEL_CHAIN = [
-  process.env.GEMINI_PRIMARY_MODEL || "gemini-3.1-flash-lite",
-  "gemini-3.8-flash",
+  process.env.GEMINI_PRIMARY_MODEL || "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
   "gemini-flash-latest",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
 ];
 
 export class MissingKeyError extends Error {
@@ -138,6 +136,7 @@ interface GeminiCallConfig {
   responseSchema?: Record<string, unknown>;
   maxOutputTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 /**
@@ -174,6 +173,7 @@ async function callGemini(
         contents,
         ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
       }),
+      signal: AbortSignal.timeout(config.timeoutMs ?? 20000),
     }
   );
 
@@ -709,16 +709,12 @@ export async function transcribeHandwritingHandler(body: any, apiKey: string): P
 
   const prompt = `Transcribe the handwriting or glyph sheet in this image EXACTLY, character by character.
 Rules:
-- Return one array entry per visual row of handwritten characters, top to bottom, in the same order as they appear. If a sequence wraps onto a new visual row in the image (for example A-M on one row and N-Z on the next row), each visual row MUST be a separate entry.
+- Return one string per visual row of handwritten characters, top to bottom, in the exact order they appear. If a sequence wraps onto a new visual row in the image (for example A-M on one row and N-Z on the next row), each visual row MUST be a separate array entry.
 - If the image is a font template or glyph sheet (with grid cells, tables, or section headers like "Uppercase Letters", "Lowercase Letters", "Numbers", "Punctuation & Symbols", "Math / Special Glyphs", "Ligatures", or small printed guide labels), IGNORE the section header banners, printed category titles, and small printed cell guide labels — transcribe ONLY the target handwritten glyphs inside the cells and any handwritten pangram/sample sentences.
-- Preserve every character exactly as written: case, digits, punctuation, symbols. Do not correct spelling, do not complete sequences, do not add or drop characters.
-- Separate words with a single space only where there is a visible word gap. Characters in separate grid cells may be separated by spaces or listed in sequence.
+- Preserve every character exactly as written: case, digits, punctuation, symbols. Use single Unicode characters for single-cell symbols like ≤, ≥, ≠, ±, ₹, €, ™, ® (do NOT expand ≤ to <=, ≥ to >=, or ™ to TM).
+- Separate words with a single space where there is a visible word gap, or separate individual grid cells with spaces.
 - Ignore anything that is not a handwritten glyph: table grid lines, cell borders, spell-check squiggles, underlines, ruled paper lines, margins, borders, page numbers, watermarks.
-- The writing may be words, sentences, paragraphs, or a glyph grid. Read it the way a person would: use surrounding context or grid order (A-Z, a-z, 0-9) to decide what each ambiguous shape is (l vs I vs 1, O vs 0, S vs 5, Z vs 2, rn vs m, cl vs d, u vs v, a vs o, g vs q, n vs h).
-- Use context ONLY to identify what a written shape is. Never insert, remove or reorder characters, and never fix a genuine misspelling.
-- Set "sure" to false for a character that is illegible, crossed out, smudged, overlapping another character, or a multi-character ligature/icon that is not a single character; otherwise true.
-- For EVERY character (not spaces) also return its glyph bounding box as box_2d = [ymin, xmin, ymax, xmax], normalized to 0-1000 of the image height/width. The box must tightly enclose ONLY the handwritten ink of that one character (including dots on i/j, accents, and descenders), NOT the surrounding grid cell border and nothing of its neighbours.
-- "chars" must list the characters of "text" in reading order (left to right), one entry per non-space character, so joining chars[].c equals text with spaces removed.`;
+- Read it the way a person would: use surrounding context or grid order (A-Z, a-z, 0-9) to decide what each ambiguous shape is (l vs I vs 1, O vs 0, S vs 5, Z vs 2, rn vs m, cl vs d, u vs v, a vs o, g vs q, n vs h). Never insert, remove or reorder characters.`;
 
   const { text, modelUsed } = await generateJsonWithFallback(apiKey, [
     { inlineData: { mimeType, data: cleanBase64(imageData) } },
@@ -726,32 +722,15 @@ Rules:
   ], {
     responseMimeType: "application/json",
     temperature: 0,
-    maxOutputTokens: 32768,
+    maxOutputTokens: 2048,
+    timeoutMs: 16000,
     responseSchema: {
       type: Type.OBJECT,
       properties: {
         lines: {
           type: Type.ARRAY,
-          description: "Each visual line of handwriting, top to bottom",
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              text: { type: Type.STRING },
-              chars: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    c: { type: Type.STRING, description: "Exactly one character" },
-                    box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER }, description: "[ymin, xmin, ymax, xmax] in 0-1000" },
-                    sure: { type: Type.BOOLEAN, description: "False when the glyph is illegible or still ambiguous" },
-                  },
-                  required: ["c", "box_2d", "sure"],
-                },
-              },
-            },
-            required: ["text", "chars"],
-          },
+          description: "Each visual line of handwritten characters, top to bottom",
+          items: { type: Type.STRING },
         },
       },
       required: ["lines"],

@@ -70,7 +70,7 @@ function ensureScratch(ref: { canvas: HTMLCanvasElement | null }, w: number, h: 
     ref.canvas.width = rw;
     ref.canvas.height = rh;
   } else {
-    const ctx = ref.canvas.getContext('2d')!;
+    const ctx = ref.canvas.getContext('2d', { willReadFrequently: true })!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, rw, rh);
   }
@@ -497,7 +497,7 @@ function drawInk(input: RenderInput, page: number, scale: number, fast?: boolean
   const pen = PENS.find((p) => p.id === s.pen) ?? PENS[0];
   const color = inkColor(s);
   const ink = ensureScratch(inkScratchRef, size.width * scale, size.height * scale);
-  const ctx = ink.getContext('2d')!;
+  const ctx = ink.getContext('2d', { willReadFrequently: true })!;
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
   ctx.lineJoin = 'round';
@@ -714,7 +714,7 @@ export function renderPage(input: RenderInput, page: number, opts: RenderOptions
   const scale = opts.scale;
   const size = PAGE_SIZES[s.pageSize];
   const out = makeCanvas(size.width * scale, size.height * scale);
-  const ctx = out.getContext('2d')!;
+  const ctx = out.getContext('2d', { willReadFrequently: true })!;
   const paper = opts.fast ? fastPaperCanvas(input, page, scale) : paperCanvas(input, page, scale);
   if (paper) ctx.drawImage(paper, 0, 0);
   else {
@@ -892,7 +892,7 @@ export function renderPage(input: RenderInput, page: number, opts: RenderOptions
 export async function tintDiagram(src: string, color: string): Promise<string> {
   const img = await loadImage(src);
   const c = makeCanvas(img.naturalWidth, img.naturalHeight);
-  const ctx = c.getContext('2d')!;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(img, 0, 0);
   const data = ctx.getImageData(0, 0, c.width, c.height);
   const r = parseInt(color.slice(1, 3), 16);

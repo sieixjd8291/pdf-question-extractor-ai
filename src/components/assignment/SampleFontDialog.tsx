@@ -4,6 +4,7 @@ import { Dialog } from './dialogs';
 import { geminiAuthHeaders } from '../../lib/geminiSettings';
 import {
   buildFontFromSamples,
+  detectGlyphTemplate,
   loadSampleImage,
   mergePieces,
   rowMatched,
@@ -37,11 +38,24 @@ interface Sample {
 type Selection = { row: number; index: number } | null;
 
 async function readHandwriting(imageData: string): Promise<AiLine[]> {
-  const res = await fetch('/api/transcribe-handwriting', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...geminiAuthHeaders() },
-    body: JSON.stringify({ imageData }),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 24000);
+  let res: Response;
+  try {
+    res = await fetch('/api/transcribe-handwriting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...geminiAuthHeaders() },
+      body: JSON.stringify({ imageData }),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('AI reading timed out.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (typeof data.error === 'string') throw new Error(data.error);
@@ -128,7 +142,33 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'AI could not read the image.';
-      updateSample(id, (s) => ({ ...s, reading: false, aiNote: `${message} Type the text yourself instead.` }));
+      updateSample(id, (s) => {
+        const tmpl = detectGlyphTemplate(s.ink);
+        if (tmpl) {
+          const count = tmpl.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0);
+          return {
+            ...s,
+            text: tmpl.text,
+            rows: tmpl.rows,
+            error: tmpl.error,
+            notFound: tmpl.missing,
+            reading: false,
+            aiNote: `Detected ${count} template glyphs automatically. Click any box to check, merge or split it.`,
+          };
+        }
+        if (s.text.trim()) {
+          const reseg = segmentSample(s.ink, s.text);
+          return {
+            ...s,
+            rows: reseg.rows,
+            error: reseg.error,
+            notFound: reseg.missing,
+            reading: false,
+            aiNote: `${message} Re-aligned using the current text.`,
+          };
+        }
+        return { ...s, reading: false, aiNote: `${message} Type the text yourself instead.` };
+      });
     }
     setSelection(null);
   };
@@ -146,10 +186,33 @@ export function SampleFontDialog({ onClose, onCreate }: { onClose: () => void; o
         const { ink, url, aiImage } = await loadSampleImage(file);
         urls.current.push(url);
         const id = nextId.current++;
-        setSamples((prev) => [...prev, { id, name: file.name, url, aiImage, ink, text: '', rows: [] }]);
-        setActiveId(id);
-        setSelection(null);
-        void runAi(id, aiImage);
+        const tmpl = detectGlyphTemplate(ink);
+        if (tmpl) {
+          const count = tmpl.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0);
+          setSamples((prev) => [
+            ...prev,
+            {
+              id,
+              name: file.name,
+              url,
+              aiImage,
+              ink,
+              text: tmpl.text,
+              rows: tmpl.rows,
+              error: tmpl.error,
+              notFound: tmpl.missing,
+              reading: false,
+              aiNote: `Detected ${count} glyphs. Click any box to check, merge or split it before creating the font.`,
+            },
+          ]);
+          setActiveId(id);
+          setSelection(null);
+        } else {
+          setSamples((prev) => [...prev, { id, name: file.name, url, aiImage, ink, text: '', rows: [] }]);
+          setActiveId(id);
+          setSelection(null);
+          void runAi(id, aiImage);
+        }
       } catch {
         setError(`${file.name} could not be read. Use a PNG, JPG, WEBP or SVG file.`);
       }
