@@ -21,6 +21,17 @@ test('ambiguous model winners never authorize rotation', () => {
   }
 });
 
+test('quarter-turns accept strong agreement only when every independent view supports the correction', () => {
+  for (const angle of [90, 270] as const) {
+    const result = prediction(angle, 0.925);
+    assert.equal(isReliableOrientation({ ...result, minViewConfidence: 0.92 }), true);
+    for (const minViewConfidence of [0.89, NaN, Infinity, 1.1]) {
+      assert.equal(isReliableOrientation({ ...result, minViewConfidence }), false);
+    }
+  }
+  assert.equal(isReliableOrientation({ ...prediction(180, 0.925), minViewConfidence: 0.92 }), false);
+});
+
 test('half-turns require stronger evidence than quarter-turns', () => {
   assert.equal(isReliableOrientation(prediction(180, 0.98)), false);
   assert.equal(isReliableOrientation(prediction(180, 0.995)), true);
