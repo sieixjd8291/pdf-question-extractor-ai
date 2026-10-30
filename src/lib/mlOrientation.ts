@@ -1,4 +1,8 @@
 import type { InferenceSession } from 'onnxruntime-web';
+import { createSerialTaskQueue } from './serialTaskQueue';
+
+// The shared WASM session is not reentrant; uploads may request inference concurrently.
+const enqueueInference = createSerialTaskQueue();
 
 /**
  * On-device document orientation classifier (PaddleOCR PP-LCNet_x1_0_doc_ori,
@@ -99,6 +103,8 @@ export interface MlOrientationResult {
   confidence: number;
   /** Per-correction scores, for diagnostics. */
   scores: Record<RightAngle, number>;
+  /** Lowest support for the same correction across all four independently turned views. */
+  minViewConfidence?: number;
 }
 
 export function isReliableOrientation(result: MlOrientationResult): boolean {
@@ -110,7 +116,9 @@ export function isReliableOrientation(result: MlOrientationResult): boolean {
     .filter(([angle]) => Number(angle) !== result.rotationDelta)
     .map(([, score]) => score));
   // An unnecessary half-turn destroys an already readable page; require stronger evidence.
-  const minimum = result.rotationDelta === 180 ? 0.99 : 0.95;
+  const unanimousQuarterTurn = (result.rotationDelta === 90 || result.rotationDelta === 270) &&
+    Number.isFinite(result.minViewConfidence) && result.minViewConfidence! >= 0.9 && result.minViewConfidence! <= 1;
+  const minimum = result.rotationDelta === 180 ? 0.99 : unanimousQuarterTurn ? 0.9 : 0.95;
   return result.confidence >= minimum && winner >= minimum && winner - runnerUp >= 0.8;
 }
 
@@ -119,7 +127,13 @@ export function isReliableOrientation(result: MlOrientationResult): boolean {
  * scored at all four right-angle turns in one batch and the predictions are
  * re-aligned and averaged, so a single ambiguous view can't flip the answer.
  */
-export async function detectOrientationWithModel(
+export function detectOrientationWithModel(
+  source: HTMLImageElement | HTMLCanvasElement
+): Promise<MlOrientationResult> {
+  return enqueueInference(() => runOrientationInference(source));
+}
+
+async function runOrientationInference(
   source: HTMLImageElement | HTMLCanvasElement
 ): Promise<MlOrientationResult> {
   const { ort, session } = await loadSession();
@@ -149,5 +163,6 @@ export async function detectOrientationWithModel(
   const scores = { 0: 0, 90: 0, 180: 0, 270: 0 } as Record<RightAngle, number>;
   for (let t = 0; t < 4; t++) scores[toCorrection(t)] = Math.round(cwScore[t] * 1000) / 1000;
 
-  return { rotationDelta: toCorrection(best), confidence: cwScore[best], scores };
+  const minViewConfidence = Math.min(...views.map((r, i) => probs[i * 4 + ((best + r / 90) % 4)]));
+  return { rotationDelta: toCorrection(best), confidence: cwScore[best], scores, minViewConfidence };
 }

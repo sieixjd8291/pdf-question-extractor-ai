@@ -1,4 +1,4 @@
-import { ScanQuad } from './scannerFilters';
+import { isSaneQuad, warpQuadToCanvas, type ScanQuad } from './scannerFilters';
 import { detectOrientationWithModel, isReliableOrientation } from './mlOrientation';
 
 export interface DocumentOrientationResult {
@@ -1305,10 +1305,26 @@ async function detectOrientationViaModel(
 export async function detectDocumentOrientation(
   source: HTMLImageElement | HTMLCanvasElement,
   currentRotation: RightAngle = 0,
-  _preDetectedQuad?: ScanQuad | null,
+  preDetectedQuad?: ScanQuad | null,
   _options?: { forceLocal?: boolean }
 ): Promise<DocumentOrientationResult> {
-  const viaModel = await detectOrientationViaModel(source, currentRotation);
+  let viaModel: DocumentOrientationResult | null;
+  if (preDetectedQuad && isSaneQuad(preDetectedQuad)) {
+    const oriented = renderRotatedBitmap(source, currentRotation, 1024);
+    let pageView: HTMLCanvasElement | null = null;
+    try {
+      pageView = oriented ? warpQuadToCanvas(oriented, preDetectedQuad) : null;
+      viaModel = await detectOrientationViaModel(pageView ?? source, pageView ? 0 : currentRotation);
+      if (viaModel && pageView) {
+        viaModel = { ...viaModel, suggestedRotation: normalizeAngle(currentRotation + viaModel.rotationDelta) };
+      }
+    } finally {
+      if (pageView) { pageView.width = 0; pageView.height = 0; }
+      if (oriented) { oriented.width = 0; oriented.height = 0; }
+    }
+  } else {
+    viaModel = await detectOrientationViaModel(source, currentRotation);
+  }
   if (viaModel && viaModel.rotationDelta !== 180) return viaModel;
 
   const local = detectDocumentOrientationLocal(source, currentRotation);
@@ -1401,7 +1417,8 @@ export async function autoFixImageOrientation(
   inputSource: HTMLImageElement | HTMLCanvasElement,
   quality: number = 0.92,
   rawFileBytes?: ArrayBuffer | Uint8Array,
-  maxEdge?: number
+  maxEdge?: number,
+  quad?: ScanQuad | null
 ): Promise<{
   dataUrl: string;
   width: number;
@@ -1426,7 +1443,7 @@ export async function autoFixImageOrientation(
   }
 
   try {
-    const orientRes = await detectDocumentOrientation(source, 0);
+    const orientRes = await detectDocumentOrientation(source, 0, quad);
     const delta = orientRes.rotationDelta || 0;
 
     if (orientRes.needsRotation && delta !== 0) {

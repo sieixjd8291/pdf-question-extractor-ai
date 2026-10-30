@@ -678,7 +678,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         if (batch.length > 0) {
           const ids = addPagesBatch(batch.map(page => ({ ...page, sourceKind: 'pdf' as const })));
           toast.success(`Imported ${batch.length} PDF page${batch.length === 1 ? '' : 's'}.`);
-          void autoCropBatch(
+          await autoCropBatch(
             batch.flatMap((page, index) =>
               ids[index] ? [{ id: ids[index], url: page.dataUrl, rotation: page.rotation ?? 0, sourceKind: 'pdf' as const }] : []
             )
@@ -743,6 +743,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
           name: string;
           thumbUrl?: string;
           rotation?: ScanPage['rotation'];
+          quad: ScanQuad | null;
         }> = [];
         let failedCount = 0;
         let autoCorrectedCount = 0;
@@ -755,9 +756,18 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                 file.arrayBuffer().catch(() => undefined),
               ]);
 
-              // Analyze text, diagrams and pictures to auto-fix 270°, 90°, or 180° into 0° upright orientation
-              const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge());
+              let quad: ScanQuad | null = null;
+              try {
+                const detection = await detectDocumentCached(url, 0);
+                quad = automaticDocumentQuad(detection, 'photo');
+              } catch {
+                // A detection failure must not discard a readable photo.
+              }
+              const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), quad);
               const wasFixed = fixRes.wasRotated || fixRes.wasFlipped;
+              if (quad && fixRes.appliedDelta !== 0) {
+                quad = rotateQuad(quad, fixRes.appliedDelta === 90 ? 1 : fixRes.appliedDelta === 180 ? 2 : -1);
+              }
 
               let thumbUrl: string | undefined;
               try {
@@ -782,12 +792,14 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                   dataUrl: fixRes.dataUrl,
                   name: file.name.replace(/\.[^.]+$/, ''),
                   thumbUrl,
+                  quad,
                   rotation: 0 as ScanPage['rotation'],
                 },
               };
             } catch {
               return { ok: false, wasFixed: false, item: null };
             } finally {
+              releaseDocumentDetection(url);
               URL.revokeObjectURL(url);
             }
         };
@@ -827,7 +839,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
           progress.stage(95, 99, 'Opening editor…');
           await yieldToPaint();
           // Atomically commit all uploaded images to state in a single batch
-          const ids = addPagesBatch(batch);
+          addPagesBatch(batch);
           imported += batch.length;
           if (autoCorrectedCount > 0) {
             toast.success(
@@ -842,12 +854,13 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                 : `Added all ${batch.length} pictures.`
             );
           }
-          // Queue auto-crop detections in the background
-          void autoCropBatch(
-            batch.flatMap((item, idx) =>
-              ids[idx] ? [{ id: ids[idx], url: item.dataUrl, rotation: 0 as ScanPage['rotation'], sourceKind: 'photo' as const }] : []
-            )
-          );
+          const cropped = batch.filter((item) => item.quad !== null).length;
+          if (cropped > 0) {
+            toast.success(`Auto-cropped ${cropped} of ${batch.length} pictures. Tap Crop to fine-tune.`);
+          }
+          if (cropped < batch.length) {
+            toast.info(`${batch.length - cropped} picture(s) need crop review — no clear page boundary found.`);
+          }
         }
         if (failedCount > 0) {
           toast.error(`Could not read ${failedCount} file${failedCount === 1 ? '' : 's'}.`);
