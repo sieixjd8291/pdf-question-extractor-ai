@@ -298,10 +298,10 @@ function runDp(
         if (g.n < strokes) strokeCost = 0.9 * (strokes - g.n);
         else {
           // Extra small marks (dots, accents, broken bits) or overlapping strokes of one glyph are cheap.
-          const fitsOne = g.maxGap <= 0.25 && (g.box.x1 - g.box.x0 + 1) <= priors[j][2] * s * 1.4;
-          for (let t = strokes; t < g.n; t++) {
-            strokeCost += g.areas[t - strokes] < g.area * 0.25 || g.maxGap <= 0.05 ? 0.2 : fitsOne ? 0.35 : 0.9;
-          }
+        const fitsOne = g.maxGap <= 0.25 && (g.box.x1 - g.box.x0 + 1) <= priors[j][2] * s * 1.4;
+        for (let t = strokes; t < g.n; t++) {
+          strokeCost += g.areas[t - strokes] < g.area * 0.25 || g.maxGap <= 0.15 ? 0.1 : fitsOne ? 0.25 : 0.9;
+        }
         }
         const c = here + join + g.gapCost + strokeCost + glyphCost(g.box, atoms[i].row, j, letters, priors, geo);
         relax((i + g.n) * S + j + 1, c, 3, g.n);

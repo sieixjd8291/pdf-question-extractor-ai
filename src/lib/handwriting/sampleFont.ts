@@ -379,7 +379,6 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
   // Apply horizontal and badge removals to `labels` now so grid intersections (+ / T corners)
   // are no longer wide horizontally when vertical grid lines are measured in step 3.
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
-  console.log('[v0] pen:', pen, 'horizMaxThick:', horizMaxThick, 'vertMaxThick:', vertMaxThick);
   const vertCut = Math.min(212, Math.max(threshold + 25, 195));
   const isVertLine = (idx: number) => !badgeInterior[idx] && (labels[idx] === -1 || gray[idx] <= vertCut);
 
@@ -532,54 +531,72 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     const typCellH = median(rowGaps) || 50;
     const maxGuideH = Math.max(9, Math.min(18, Math.round(typCellH * 0.24)));
     const maxGuideW = Math.max(12, Math.min(28, Math.round(w * 0.032)));
+    const visited = new Uint8Array(w * h);
+    const qx = new Int32Array(maxGuideW * maxGuideH * 4);
+    const qy = new Int32Array(maxGuideW * maxGuideH * 4);
     for (const yb of borderRows) {
-      const yLo = Math.max(0, yb - Math.ceil(maxGuideH * 0.6));
-      const yHi = Math.min(h - 1, yb + Math.ceil(maxGuideH * 0.65));
       for (let x = 0; x < w; x++) {
-        // Look for small isolated ink clusters straddling yb that do not extend into the cell body below yHi.
-        if (labels[yb * w + x] !== -1 && (yb + 1 >= h || labels[(yb + 1) * w + x] !== -1) && (yb <= 0 || labels[(yb - 1) * w + x] !== -1)) continue;
-        let xEnd = x;
-        while (xEnd < w && xEnd - x <= maxGuideW + 4) {
-          let hasCol = false;
-          for (let yy = yLo; yy <= yHi; yy++) if (labels[yy * w + xEnd] === -1) { hasCol = true; break; }
-          if (!hasCol) break;
-          xEnd++;
+        let seedY = -1;
+        for (let dy = -2; dy <= 2; dy++) {
+          const yy = yb + dy;
+          if (yy >= 0 && yy < h && labels[yy * w + x] === -1 && !visited[yy * w + x]) {
+            seedY = yy;
+            break;
+          }
         }
-        const bw = xEnd - x;
-        if (bw >= 1 && bw <= maxGuideW) {
-          let minY = h, maxY = -1;
-          let touchesOutside = false;
-          for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, xEnd); xx++) {
-            if (yLo > 0 && labels[(yLo - 1) * w + xx] === -1) touchesOutside = true;
-            if (yHi + 1 < h && labels[(yHi + 1) * w + xx] === -1) touchesOutside = true;
-            for (let yy = yLo; yy <= yHi; yy++) {
-              if (labels[yy * w + xx] === -1) {
-                if (yy < minY) minY = yy;
-                if (yy > maxY) maxY = yy;
+        if (seedY < 0) continue;
+        // Flood-fill the 8-connected component touching yb within guide bounds.
+        let head = 0, tail = 0;
+        qx[tail] = x;
+        qy[tail] = seedY;
+        tail++;
+        visited[seedY * w + x] = 1;
+        let minX = x, maxX = x, minY = seedY, maxY = seedY;
+        let overflow = false;
+        while (head < tail) {
+          const cx = qx[head];
+          const cy = qy[head];
+          head++;
+          for (let dy = -1; dy <= 1; dy++) {
+            const ny = cy + dy;
+            if (ny < 0 || ny >= h) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = cx + dx;
+              if (nx < 0 || nx >= w) continue;
+              const idx = ny * w + nx;
+              if (labels[idx] !== -1 || visited[idx]) continue;
+              visited[idx] = 1;
+              if (nx < minX) minX = nx;
+              if (nx > maxX) maxX = nx;
+              if (ny < minY) minY = ny;
+              if (ny > maxY) maxY = ny;
+              if (maxX - minX + 1 > maxGuideW || maxY - minY + 1 > maxGuideH || tail >= qx.length) {
+                overflow = true;
+              } else {
+                qx[tail] = nx;
+                qy[tail] = ny;
+                tail++;
               }
             }
           }
-          // Only erase if the mark straddles the border line (`minY <= yb + 1`) and is self-contained within [yLo, yHi],
-          // AND there is real glyph ink deeper inside the cell below it.
-          if (!touchesOutside && minY <= yb + 1 && maxY - minY + 1 <= maxGuideH) {
-            let hasGlyphBelow = false;
-            const checkY0 = yHi + 2;
-            const checkY1 = Math.min(h - 1, yb + Math.round(typCellH * 0.88));
-            const checkX0 = Math.max(0, x - Math.round(maxGuideW * 0.8));
-            const checkX1 = Math.min(w - 1, xEnd + Math.round(maxGuideW * 0.8));
-            for (let yy = checkY0; yy <= checkY1 && !hasGlyphBelow; yy++) {
-              for (let xx = checkX0; xx <= checkX1; xx++) {
-                if (labels[yy * w + xx] === -1) { hasGlyphBelow = true; break; }
-              }
+        }
+        if (!overflow && minY <= yb + 2 && maxY >= yb - 2 && maxY - minY + 1 <= maxGuideH && maxX - minX + 1 <= maxGuideW) {
+          let hasGlyphBelow = false;
+          const checkY0 = maxY + 2;
+          const checkY1 = Math.min(h - 1, yb + Math.round(typCellH * 0.88));
+          const checkX0 = Math.max(0, minX - Math.round(maxGuideW * 0.8));
+          const checkX1 = Math.min(w - 1, maxX + Math.round(maxGuideW * 0.8));
+          for (let yy = checkY0; yy <= checkY1 && !hasGlyphBelow; yy++) {
+            for (let xx = checkX0; xx <= checkX1; xx++) {
+              if (labels[yy * w + xx] === -1) { hasGlyphBelow = true; break; }
             }
-            if (hasGlyphBelow) {
-              for (let yy = minY; yy <= maxY; yy++) {
-                for (let xx = x; xx < xEnd; xx++) labels[yy * w + xx] = 0;
-              }
+          }
+          if (hasGlyphBelow) {
+            for (let k = 0; k < tail; k++) {
+              labels[qy[k] * w + qx[k]] = 0;
             }
           }
         }
-        x = Math.max(x, xEnd - 1);
       }
     }
   }
@@ -628,7 +645,7 @@ function isHollowFrame(labels: Int32Array, w: number, comp: InkComponent, id: nu
   // A rectangular frame covers almost all 4 sides and has very little ink in its interior,
   // or is a wide multi-cell frame spanning a large part of the page.
   const fourSides = topCols >= bw * 0.75 && botCols >= bw * 0.75 && leftRows >= bh * 0.75 && rightRows >= bh * 0.75;
-  if (fourSides && innerInk <= total * 0.12 && (bw > pen * 14 || bh > pen * 14)) return true;
+  if (fourSides && innerInk <= total * 0.12 && ((bw > Math.max(44, w * 0.045) && bh > Math.max(44, pen * 14)) || bw > pen * 24 || bh > pen * 24)) return true;
   if (bw > w * 0.35 && bh > pen * 6 && innerInk <= total * 0.25 && (topCols >= bw * 0.7 || botCols >= bw * 0.7)) return true;
   return false;
 }
@@ -958,7 +975,7 @@ export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideB
     const ah = a.y1 - a.y0 + 1;
     for (let j = i + 1; j < comps.length; j++) {
       const b = comps[j].c;
-      if (b.x0 > a.x1) break;
+      if (b.x0 > a.x1 + 3) break;
       const bw = b.x1 - b.x0 + 1;
       const bh = b.y1 - b.y0 + 1;
       const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
@@ -966,10 +983,24 @@ export function clusterRow(ink: InkMap, compIds: number[], text = '', splitSideB
       const wider = Math.max(aw, bw);
       const combinedW = Math.max(a.x1, b.x1) - Math.min(a.x0, b.x0) + 1;
       // Only strokes stacked above each other (i dots, : ; ! ? =) or overlapping strokes of one
-      // character (crossbar/hook on a stem) merge immediately; side-by-side strokes stay apart.
+      // character (crossbar/hook on a stem, or a 1-2px detached stem+bowl of d/b/p/q/P) merge immediately.
       const vOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
       const shorter = Math.min(ah, bh);
+      const taller = Math.max(ah, bh);
       const combinedH = Math.max(a.y1, b.y1) - Math.min(a.y0, b.y0) + 1;
+      if (overlap <= 0) {
+        const hGap = b.x0 - a.x1 - 1;
+        const stemAndBowl =
+          splitSideBySide &&
+          hGap <= 2 &&
+          vOverlap >= shorter * 0.75 &&
+          narrower <= Math.max(5, medW * 0.32) &&
+          wider >= medW * 0.45 &&
+          taller >= medH * 0.85 &&
+          combinedW <= medW * 1.15;
+        if (stemAndBowl) parent[find(j)] = find(i);
+        continue;
+      }
       if (vOverlap < shorter * 0.25 && ah >= medH * 0.6 && bh >= medH * 0.6 && combinedH > medH * 1.45) continue;
       if (-vOverlap > stackGap || (vOverlap <= 0 && inkGap(ink, comps[i].id, comps[j].id) > stackGap)) continue;
       const sameGlyphOverlap = overlap >= wider * 0.6 && combinedW <= medW * 1.35 && inkGap(ink, comps[i].id, comps[j].id) <= 3;
@@ -1653,7 +1684,6 @@ export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string
 
   // Quick row-band count check so we only evaluate candidates matching the image's line count.
   const bandCheck = inkRows(ink, '1\n2\n3\n4\n5\n6\n7');
-  console.log('[v0] bandCheck:', bandCheck?.map((r) => ({ len: r.length, y0: r[0]?.y0, y1: r[0]?.y1, x0: r[0]?.x0, x1: r[0]?.x1 })));
   if (!bandCheck || bandCheck.length < 2) return null;
 
   let bestResult: (Segmentation & { text: string }) | null = null;

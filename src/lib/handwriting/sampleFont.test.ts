@@ -521,13 +521,16 @@ test('full 7-row glyph chart with hollow letters, printed border guides, |, %, $
     const yTop = lY + 8;
     const yMid = lY + 22;
     if (ch === 'd') {
-      rects.push([x, yMid, 14, 3], [x, yMid + 19, 14, 3], [x, yMid, 3, 22], [x + 14, yTop, 4, 38]);
+      // 1px gap between hollow bowl (x..x+12) and vertical stem (x+14..x+17)
+      rects.push([x, yMid, 13, 3], [x, yMid + 19, 13, 3], [x, yMid, 3, 22], [x + 10, yMid, 3, 22], [x + 14, yTop, 4, 38]);
     } else if (ch === 'f') {
-      rects.push([x + 6, yTop, 11, 3], [x + 6, yTop, 4, 46], [x, yMid, 16, 3]);
+      // 1px gap between stem and crossbar halves
+      rects.push([x + 6, yTop, 11, 3], [x + 6, yTop, 4, 46], [x, yMid, 5, 3], [x + 11, yMid, 6, 3]);
     } else if (ch === 'i') {
       rects.push([x + 6, yTop + 4, 5, 5], [x + 6, yMid, 4, 22]);
     } else if (ch === 'j') {
-      rects.push([x + 8, yTop + 4, 5, 5], [x + 8, yMid, 4, 30], [x + 1, yMid + 27, 10, 4]);
+      // 1px gap between stem and bottom hook
+      rects.push([x + 8, yTop + 4, 5, 5], [x + 8, yMid, 4, 26], [x + 1, yMid + 27, 10, 4]);
     } else if (ch === 'l') {
       rects.push([x + 7, yTop, 4, 40]);
     } else {
@@ -539,9 +542,11 @@ test('full 7-row glyph chart with hollow letters, printed border guides, |, %, $
     const r2 = lY + lH;
     const yMid = r2 + 16;
     if (ch === 'p') {
-      rects.push([x, yMid, 4, 38], [x + 4, yMid, 14, 3], [x + 4, yMid + 18, 14, 3], [x + 15, yMid, 3, 21]);
+      // 1px gap between vertical stem (x..x+3) and bowl (x+5..x+17)
+      rects.push([x, yMid, 4, 38], [x + 5, yMid, 13, 3], [x + 5, yMid + 18, 13, 3], [x + 15, yMid, 3, 21]);
     } else if (ch === 'q') {
-      rects.push([x, yMid, 14, 3], [x, yMid + 18, 14, 3], [x, yMid, 3, 21], [x + 14, yMid, 4, 38], [x + 18, yMid + 34, 7, 4]);
+      // 1px gap between bowl (x..x+12) and vertical stem (x+14..x+17)
+      rects.push([x, yMid, 13, 3], [x, yMid + 18, 13, 3], [x, yMid, 3, 21], [x + 14, yMid, 4, 38], [x + 18, yMid + 34, 7, 4]);
     } else if (ch === 'y') {
       rects.push([x, yMid, 4, 18], [x + 14, yMid, 4, 38], [x, yMid + 15, 16, 3], [x + 4, yMid + 35, 12, 3]);
     } else {
