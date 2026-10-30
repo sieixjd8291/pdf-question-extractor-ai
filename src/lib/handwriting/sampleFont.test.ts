@@ -445,3 +445,225 @@ test('letters with tall vertical stems (d, f, j, p, q, 9) near grid borders are 
   assert.equal(aiSeg.rows.length, 2);
   assert.equal(aiSeg.rows.reduce((n, r) => n + r.letters.length, 0), 26);
 });
+
+test('full 7-row glyph chart with hollow letters, printed border guides, |, %, $, [, ], d, f, j, l, p, q, P, G, and punctuation matches all 102 glyphs cleanly', () => {
+  const W = 1040;
+  const H = 640;
+  const gx0 = 30;
+  const gridW = 980;
+  const rects: Rect[] = [];
+
+  const drawGridSection = (gy0: number, rowsCount: number, colsCount: number, cellH: number) => {
+    const cellW = gridW / colsCount;
+    // Section header badge above table
+    rects.push([gx0, gy0 - 20, 150, 2], [gx0, gy0, 150, 2], [gx0, gy0 - 20, 2, 22], [gx0 + 148, gy0 - 20, 2, 22]);
+    rects.push([gx0 + 12, gy0 - 14, 34, 9], [gx0 + 54, gy0 - 14, 42, 9]);
+    for (let r = 0; r <= rowsCount; r++) {
+      const y = Math.round(gy0 + r * cellH);
+      rects.push([gx0, y, gridW, 2]);
+    }
+    for (let c = 0; c <= colsCount; c++) {
+      const x = Math.round(gx0 + c * cellW);
+      rects.push([x, gy0, 2, rowsCount * cellH]);
+    }
+    // Tiny printed guide label straddling the top horizontal border of every cell
+    for (let r = 0; r < rowsCount; r++) {
+      const yb = Math.round(gy0 + r * cellH);
+      for (let c = 0; c < colsCount; c++) {
+        const cx = Math.round(gx0 + (c + 0.5) * cellW);
+        rects.push([cx - 3, yb - 3, 6, 8]);
+      }
+    }
+  };
+
+  // 4 sections: Uppercase (2x13), Lowercase (2x13), Numbers (1x10), Punctuation & Symbols (2x20)
+  const uY = 30, uH = 60;
+  const lY = 185, lH = 60;
+  const nY = 340, nH = 60;
+  const pY = 435, pH = 64;
+  drawGridSection(uY, 2, 13, uH);
+  drawGridSection(lY, 2, 13, lH);
+  drawGridSection(nY, 1, 10, nH);
+  drawGridSection(pY, 2, 20, pH);
+
+  const upper1 = 'ABCDEFGHIJKLM';
+  const upper2 = 'NOPQRSTUVWXYZ';
+  const lower1 = 'abcdefghijklm';
+  const lower2 = 'nopqrstuvwxyz';
+  const digits = '0123456789';
+  const punct1 = ['.', ',', ';', ':', '!', '?', '\'', '"', '(', ')', '-', '_', '/', '\\', '|', '@', '#', '$', '%', '&'];
+  const punct2 = ['*', '+', '=', '<', '>', '≤', '≥', '~', '^', '`', '[', ']', '{', '}', ',', '.', '₹', '€', '™', '®'];
+
+  const uCellW = gridW / 13;
+  // Uppercase row 1 & 2 (hollow 3px strokes, special P and G)
+  Array.from(upper1).forEach((ch, c) => {
+    const x = Math.round(gx0 + c * uCellW + 24);
+    const y = uY + 12;
+    if (ch === 'G') {
+      rects.push([x, y, 22, 4], [x, y, 4, 34], [x, y + 30, 22, 4], [x + 14, y + 18, 8, 4], [x + 18, y + 18, 4, 22]);
+    } else {
+      rects.push([x, y, 20, 4], [x, y + 32, 20, 4], [x, y, 4, 36], [x + 16, y, 4, 36]);
+    }
+  });
+  Array.from(upper2).forEach((ch, c) => {
+    const x = Math.round(gx0 + c * uCellW + 24);
+    const y = uY + uH + 12;
+    if (ch === 'P') {
+      rects.push([x, y, 4, 38], [x, y, 18, 4], [x, y + 16, 18, 4], [x + 15, y, 4, 20]);
+    } else {
+      rects.push([x, y, 20, 4], [x, y + 32, 20, 4], [x, y, 4, 36], [x + 16, y, 4, 36]);
+    }
+  });
+
+  // Lowercase row 1 & 2 (hollow bowls, tall stems on d, f, j, l, p, q, y)
+  Array.from(lower1).forEach((ch, c) => {
+    const x = Math.round(gx0 + c * uCellW + 24);
+    const yTop = lY + 8;
+    const yMid = lY + 22;
+    if (ch === 'd') {
+      // 1px gap between hollow bowl (x..x+12) and vertical stem (x+14..x+17)
+      rects.push([x, yMid, 13, 3], [x, yMid + 19, 13, 3], [x, yMid, 3, 22], [x + 10, yMid, 3, 22], [x + 14, yTop, 4, 38]);
+    } else if (ch === 'f') {
+      // 1px gap between stem and crossbar halves
+      rects.push([x + 6, yTop, 11, 3], [x + 6, yTop, 4, 46], [x, yMid, 5, 3], [x + 11, yMid, 6, 3]);
+    } else if (ch === 'i') {
+      rects.push([x + 6, yTop + 4, 5, 5], [x + 6, yMid, 4, 22]);
+    } else if (ch === 'j') {
+      // 1px gap between stem and bottom hook
+      rects.push([x + 8, yTop + 4, 5, 5], [x + 8, yMid, 4, 26], [x + 1, yMid + 27, 10, 4]);
+    } else if (ch === 'l') {
+      rects.push([x + 7, yTop, 4, 40]);
+    } else {
+      rects.push([x, yMid, 18, 3], [x, yMid + 19, 18, 3], [x, yMid, 3, 22], [x + 15, yMid, 3, 22]);
+    }
+  });
+  Array.from(lower2).forEach((ch, c) => {
+    const x = Math.round(gx0 + c * uCellW + 24);
+    const r2 = lY + lH;
+    const yMid = r2 + 16;
+    if (ch === 'p') {
+      // 1px gap between vertical stem (x..x+3) and bowl (x+5..x+17)
+      rects.push([x, yMid, 4, 38], [x + 5, yMid, 13, 3], [x + 5, yMid + 18, 13, 3], [x + 15, yMid, 3, 21]);
+    } else if (ch === 'q') {
+      // 1px gap between bowl (x..x+12) and vertical stem (x+14..x+17)
+      rects.push([x, yMid, 13, 3], [x, yMid + 18, 13, 3], [x, yMid, 3, 21], [x + 14, yMid, 4, 38], [x + 18, yMid + 34, 7, 4]);
+    } else if (ch === 'y') {
+      rects.push([x, yMid, 4, 18], [x + 14, yMid, 4, 38], [x, yMid + 15, 16, 3], [x + 4, yMid + 35, 12, 3]);
+    } else {
+      rects.push([x, yMid, 18, 3], [x, yMid + 18, 18, 3], [x, yMid, 3, 21], [x + 15, yMid, 3, 21]);
+    }
+  });
+
+  // Numbers 0-9
+  const nCellW = gridW / 10;
+  Array.from(digits).forEach((_, c) => {
+    const x = Math.round(gx0 + c * nCellW + 34);
+    const y = nY + 14;
+    rects.push([x, y, 20, 4], [x, y + 28, 20, 4], [x, y, 4, 32], [x + 16, y, 4, 32]);
+  });
+
+  // Punctuation row 1 & 2
+  const pCellW = gridW / 20;
+  punct1.forEach((ch, c) => {
+    const x = Math.round(gx0 + c * pCellW + 14);
+    const y = pY + 14;
+    if (ch === '.') rects.push([x + 6, y + 24, 6, 6]);
+    else if (ch === ',') rects.push([x + 6, y + 22, 6, 11]);
+    else if (ch === ';') rects.push([x + 6, y + 8, 5, 5], [x + 6, y + 20, 5, 11]);
+    else if (ch === ':') rects.push([x + 6, y + 8, 5, 5], [x + 6, y + 22, 5, 5]);
+    else if (ch === '!') rects.push([x + 6, y + 2, 4, 22], [x + 6, y + 28, 5, 5]);
+    else if (ch === '?') rects.push([x + 2, y + 2, 14, 4], [x + 12, y + 2, 4, 12], [x + 6, y + 12, 8, 10], [x + 6, y + 28, 5, 5]);
+    else if (ch === '\'') rects.push([x + 7, y + 4, 4, 10]);
+    else if (ch === '"') rects.push([x + 3, y + 4, 4, 10], [x + 11, y + 4, 4, 10]);
+    else if (ch === '-') rects.push([x + 2, y + 18, 14, 4]);
+    else if (ch === '_') rects.push([x + 1, y + 32, 18, 4]);
+    else if (ch === '|') rects.push([x + 8, y + 2, 4, 36]);
+    else if (ch === '$') rects.push([x + 8, y, 3, 40], [x + 2, y + 6, 15, 4], [x + 2, y + 18, 15, 4], [x + 2, y + 30, 15, 4]);
+    else if (ch === '%') {
+      // Diagonal slash + top-left circle + bottom-right circle (not touching the slash)
+      rects.push([x + 2, y + 4, 6, 6], [x + 12, y + 26, 6, 6]);
+      for (let t = 0; t < 28; t++) rects.push([x + 16 - Math.floor(t * 0.5), y + 4 + t, 3, 2]);
+    } else {
+      rects.push([x + 2, y + 4, 16, 30]);
+    }
+  });
+
+  punct2.forEach((ch, c) => {
+    const x = Math.round(gx0 + c * pCellW + 14);
+    const y = pY + pH + 14;
+    if (ch === '[') rects.push([x + 4, y + 2, 10, 4], [x + 4, y + 2, 4, 34], [x + 4, y + 32, 10, 4]);
+    else if (ch === ']') rects.push([x + 4, y + 2, 10, 4], [x + 10, y + 2, 4, 34], [x + 4, y + 32, 10, 4]);
+    else if (ch === ',') rects.push([x + 6, y + 22, 6, 11]);
+    else if (ch === '.') rects.push([x + 6, y + 24, 6, 6]);
+    else if (ch === '™') rects.push([x, y + 4, 9, 14], [x + 11, y + 4, 10, 14]);
+    else if (ch === '^' || ch === '`') rects.push([x + 5, y + 4, 8, 9]);
+    else if (ch === '~' || ch === '=') rects.push([x + 2, y + 14, 15, 10]);
+    else rects.push([x + 2, y + 4, 16, 28]);
+  });
+
+  const ink = buildInkMap(image(W, H, rects));
+  const tmpl = detectGlyphTemplate(ink);
+  assert.ok(tmpl, 'detects full 7-row glyph template');
+  assert.equal(tmpl.error, undefined);
+  assert.equal(tmpl.rows.length, 7);
+  assert.ok(tmpl.rows.every(rowMatched));
+  assert.equal(tmpl.rows.reduce((n, r) => n + r.letters.length, 0), 102);
+
+  // Check specific glyphs that were previously clipped or missed in screenshots
+  const rowMap = tmpl.rows.map((r) => {
+    const m = new Map<string, Piece[]>();
+    r.letters.forEach((ch, i) => m.set(ch, [...(m.get(ch) ?? []), r.pieces[i]]));
+    return m;
+  });
+
+  const pipePiece = rowMap[5].get('|')?.[0];
+  assert.ok(pipePiece && pipePiece.y1 - pipePiece.y0 + 1 >= 32, `pipe '|' is preserved at full height`);
+  const atPiece = rowMap[5].get('@')?.[0];
+  assert.ok(atPiece && pipePiece && atPiece.x0 > pipePiece.x1 + 15, `pipe '|' is in cell 15, not on '@' in cell 16`);
+  const pctPiece = rowMap[5].get('%')?.[0];
+  assert.ok(pctPiece && pctPiece.x1 - pctPiece.x0 + 1 >= 15 && pctPiece.y1 - pctPiece.y0 + 1 >= 26, `'%' includes both circles and slash`);
+  const dollarPiece = rowMap[5].get('$')?.[0];
+  assert.ok(dollarPiece && dollarPiece.y1 - dollarPiece.y0 + 1 >= 36, `'$' keeps top and bottom vertical stem tips`);
+
+  const lBracket = rowMap[6].get('[')?.[0];
+  const rBracket = rowMap[6].get(']')?.[0];
+  assert.ok(lBracket && lBracket.y1 - lBracket.y0 + 1 >= 30 && lBracket.x1 - lBracket.x0 + 1 >= 9, `'[' keeps top bar and spine`);
+  assert.ok(rBracket && rBracket.y1 - rBracket.y0 + 1 >= 30 && rBracket.x1 - rBracket.x0 + 1 >= 9, `']' keeps top bar and spine`);
+  const row7Comma = rowMap[6].get(',')?.[0];
+  const row7Period = rowMap[6].get('.')?.[0];
+  assert.ok(row7Comma && row7Period && row7Period.x0 > row7Comma.x1 + 15, `row 7 ',' and '.' are matched in separate cells 15 and 16`);
+
+  const dPiece = rowMap[2].get('d')?.[0];
+  const fPiece = rowMap[2].get('f')?.[0];
+  const jPiece = rowMap[2].get('j')?.[0];
+  const lPiece = rowMap[2].get('l')?.[0];
+  const pPiece = rowMap[3].get('p')?.[0];
+  const qPiece = rowMap[3].get('q')?.[0];
+  const yPiece = rowMap[3].get('y')?.[0];
+  const PPiece = rowMap[1].get('P')?.[0];
+  const GPiece = rowMap[0].get('G')?.[0];
+  assert.ok(dPiece && dPiece.y1 - dPiece.y0 + 1 >= 35, `d keeps full ascender`);
+  assert.ok(fPiece && fPiece.y1 - fPiece.y0 + 1 >= 42, `f keeps full stem and crossbar`);
+  assert.ok(jPiece && jPiece.y1 - jPiece.y0 + 1 >= 36, `j keeps dot, stem and hook`);
+  assert.ok(lPiece && lPiece.y1 - lPiece.y0 + 1 >= 36, `l keeps full stem`);
+  assert.ok(pPiece && pPiece.y1 - pPiece.y0 + 1 >= 35, `p keeps full descender`);
+  assert.ok(qPiece && qPiece.y1 - qPiece.y0 + 1 >= 35, `q keeps full descender`);
+  assert.ok(yPiece && yPiece.y1 - yPiece.y0 + 1 >= 35, `y keeps top V-arms and descender`);
+  assert.ok(PPiece && PPiece.y1 - PPiece.y0 + 1 >= 35, `P keeps lower vertical stem`);
+  assert.ok(GPiece && GPiece.y1 - GPiece.y0 + 1 >= 36, `G keeps lower right leg`);
+
+  // Also verify segmentWithAi snaps noisy AI row 7 transcription ("{ } }") to canonical template
+  const noisyAi = segmentWithAi(ink, [
+    { text: 'A B C D E F G H I J K L M', chars: [] },
+    { text: 'N O P Q R S T U V W X Y Z', chars: [] },
+    { text: 'a b c d e f g h i j k l m', chars: [] },
+    { text: 'n o p q r s t u v w x y z', chars: [] },
+    { text: '0 1 2 3 4 5 6 7 8 9', chars: [] },
+    { text: '. , ; : ! ? \' " ( ) - _ / \\ | @ # $ % &', chars: [] },
+    { text: '* + = < > ≤ ≥ ~ ^ ` [ ] { } } ₹ € TM ®', chars: [] },
+  ]);
+  assert.equal(noisyAi.error, undefined);
+  assert.ok(noisyAi.rows[6].text.includes('{ } , .'), `AI typo '{ } }' is snapped to '{ } , .' (got ${noisyAi.rows[6].text})`);
+  assert.equal(noisyAi.rows.reduce((n, r) => n + r.letters.length, 0), 102);
+});
+

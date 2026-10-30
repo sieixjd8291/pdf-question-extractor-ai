@@ -48,6 +48,8 @@ interface Geometry {
   scale: number;
   /** Baseline per row as y = a + b * x, or null when unknown. */
   base: ({ a: number; b: number } | null)[];
+  /** True when the row's baseline was anchored by >= 3 alphanumeric glyphs. */
+  strongBase?: boolean[];
 }
 
 const DEFAULT_PRIOR = [1.2, 0, 0.9, 1] as const;
@@ -150,13 +152,17 @@ function glyphCost(box: Box, row: number, li: number, letters: LetterSpec[], pri
   let cost = 2 * Math.log((w + pad) / (width * s + pad)) ** 2;
   const base = geo.base[row];
   const cx = (box.x0 + box.x1) / 2;
+  const h = box.y1 - box.y0 + 1;
   if (base) {
     const b = base.a + base.b * cx;
     const dt = (box.y0 - (b - top * s)) / s;
     const db = (box.y1 - (b - bottom * s)) / s;
-    cost += 0.6 * (Math.min(dt * dt, 6) + Math.min(db * db, 6));
+    if (geo.strongBase?.[row] === false) {
+      cost += 0.22 * (Math.min(dt * dt, 6) + Math.min(db * db, 6)) + 0.35 * Math.log((h + pad) / ((top - bottom) * s + pad)) ** 2;
+    } else {
+      cost += 0.6 * (Math.min(dt * dt, 6) + Math.min(db * db, 6));
+    }
   } else {
-    const h = box.y1 - box.y0 + 1;
     cost += 0.5 * Math.log((h + pad) / ((top - bottom) * s + pad)) ** 2;
   }
   const hint = letters[li].hint;
@@ -182,7 +188,14 @@ function runDp(
   const s = geo.scale;
   cost[0] = 0;
 
-  const skipAtom = atoms.map((a) => 0.4 + 3.6 * Math.sqrt(Math.min(1, a.area / medArea)));
+  const skipAtom = atoms.map((a, i) => {
+    const baseCost = 0.4 + 3.6 * Math.sqrt(Math.min(1, a.area / medArea));
+    if (a.area < medArea * 0.03) return baseCost;
+    const leftGap = i === 0 || atoms[i - 1].row !== a.row ? Infinity : a.x0 - atoms[i - 1].x1;
+    const rightGap = i + 1 === K || atoms[i + 1].row !== a.row ? Infinity : atoms[i + 1].x0 - a.x1;
+    if (leftGap >= s * 0.35 && rightGap >= s * 0.35) return Math.max(baseCost, 2.8);
+    return baseCost;
+  });
 
   /** Cost of starting a glyph for letter j at atom i: line wraps and word gaps. */
   const joinCost = (i: number, j: number) => {
@@ -285,10 +298,10 @@ function runDp(
         if (g.n < strokes) strokeCost = 0.9 * (strokes - g.n);
         else {
           // Extra small marks (dots, accents, broken bits) or overlapping strokes of one glyph are cheap.
-          const fitsOne = g.maxGap <= 0.25 && (g.box.x1 - g.box.x0 + 1) <= priors[j][2] * s * 1.4;
-          for (let t = strokes; t < g.n; t++) {
-            strokeCost += g.areas[t - strokes] < g.area * 0.25 || g.maxGap <= 0.05 ? 0.2 : fitsOne ? 0.35 : 0.9;
-          }
+        const fitsOne = g.maxGap <= 0.25 && (g.box.x1 - g.box.x0 + 1) <= priors[j][2] * s * 1.4;
+        for (let t = strokes; t < g.n; t++) {
+          strokeCost += g.areas[t - strokes] < g.area * 0.25 || g.maxGap <= 0.15 ? 0.1 : fitsOne ? 0.25 : 0.9;
+        }
         }
         const c = here + join + g.gapCost + strokeCost + glyphCost(g.box, atoms[i].row, j, letters, priors, geo);
         relax((i + g.n) * S + j + 1, c, 3, g.n);
@@ -468,6 +481,7 @@ function estimateGeometry(atoms: AtomFeat[], letters: LetterSpec[], priors: (rea
   const scale = median(scales);
   const rows = Math.max(...atoms.map((a) => a.row)) + 1;
   const base: Geometry['base'] = [];
+  const strongBase: boolean[] = [];
   for (let r = 0; r < rows; r++) {
     const pts: { x: number; y: number; strong: boolean }[] = [];
     for (const p of placed) {
@@ -478,7 +492,10 @@ function estimateGeometry(atoms: AtomFeat[], letters: LetterSpec[], priors: (rea
       pts.push({ x: cx, y: p.box.y1 + bottom * scale, strong });
       if (!strong) pts.push({ x: cx, y: p.box.y0 + top * scale, strong });
     }
-    const use = pts.filter((p) => p.strong).length >= 3 ? pts.filter((p) => p.strong) : pts;
+    const strongPts = pts.filter((p) => p.strong);
+    const hasStrong = strongPts.length >= 3;
+    const use = hasStrong ? strongPts : pts;
+    strongBase.push(hasStrong);
     if (!use.length) { base.push(null); continue; }
     let slope = 0;
     if (use.length >= 4) {
@@ -490,5 +507,5 @@ function estimateGeometry(atoms: AtomFeat[], letters: LetterSpec[], priors: (rea
     }
     base.push({ a: median(use.map((p) => p.y - slope * p.x)), b: slope });
   }
-  return { scale: Number.isFinite(scale) && scale > 2 ? scale : geo.scale, base };
+  return { scale: Number.isFinite(scale) && scale > 2 ? scale : geo.scale, base, strongBase };
 }
