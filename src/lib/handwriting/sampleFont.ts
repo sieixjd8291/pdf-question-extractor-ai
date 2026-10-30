@@ -202,27 +202,29 @@ function strokeWidth(labels: Int32Array, w: number, h: number): number {
  */
 function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number, w: number, h: number, pen: number): void {
   if (w < 120 || h < 120) return;
-  const maxThick = Math.max(3, Math.min(10, Math.round(pen * 1.8)));
-  const minHorizSpan = Math.max(80, Math.round(w * 0.24));
-  const maxHorizGap = Math.max(8, Math.round(w * 0.018));
-  const gridCut = Math.max(218, Math.min(232, threshold + 45));
+  const horizMaxThick = Math.max(3, Math.min(5, Math.round(pen * 1.15)));
+  const vertMaxThick = Math.max(3, Math.min(6, Math.round(pen * 1.25)));
+  const maxThick = Math.max(horizMaxThick, vertMaxThick);
+  const minHorizSpan = Math.max(80, Math.round(w * 0.42));
+  const maxHorizGap = Math.max(6, Math.min(12, Math.round(w * 0.012)));
+  const gridCut = Math.min(215, Math.max(threshold + 35, 212));
   const drop = new Uint8Array(w * h);
   const horizGrid = new Uint8Array(w * h);
   const isLine = (idx: number) => labels[idx] === -1 || gray[idx] <= gridCut;
 
   const vertThickAt = (x: number, y: number): number => {
     let y0 = y;
-    while (y0 > 0 && isLine((y0 - 1) * w + x) && y - (y0 - 1) <= maxThick + 1) y0--;
+    while (y0 > 0 && isLine((y0 - 1) * w + x) && y - (y0 - 1) <= horizMaxThick + 1) y0--;
     let y1 = y;
-    while (y1 + 1 < h && isLine((y1 + 1) * w + x) && (y1 + 1) - y <= maxThick + 1) y1++;
+    while (y1 + 1 < h && isLine((y1 + 1) * w + x) && (y1 + 1) - y <= horizMaxThick + 1) y1++;
     return y1 - y0 + 1;
   };
 
   const horizThickAt = (x: number, y: number): number => {
     let x0 = x;
-    while (x0 > 0 && labels[y * w + (x0 - 1)] === -1 && x - (x0 - 1) <= maxThick + 1) x0--;
+    while (x0 > 0 && labels[y * w + (x0 - 1)] === -1 && x - (x0 - 1) <= vertMaxThick + 1) x0--;
     let x1 = x;
-    while (x1 + 1 < w && labels[y * w + (x1 + 1)] === -1 && (x1 + 1) - x <= maxThick + 1) x1++;
+    while (x1 + 1 < w && labels[y * w + (x1 + 1)] === -1 && (x1 + 1) - x <= vertMaxThick + 1) x1++;
     return x1 - x0 + 1;
   };
 
@@ -235,18 +237,18 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     let thinCols = 0;
     const flushHoriz = (endX: number) => {
       const span = endX - runStart;
-      if (runStart >= 0 && span >= minHorizSpan && selfCols >= span * 0.45 && inkCols >= span * 0.68 && thinCols >= span * 0.48) {
+      if (runStart >= 0 && span >= minHorizSpan && selfCols >= span * 0.62 && inkCols >= span * 0.76 && thinCols >= span * 0.68) {
         for (let xx = runStart; xx < endX; xx++) {
           for (let dy = -1; dy <= 1; dy++) {
             const yy = y + dy;
             if (yy >= 0 && yy < h && isLine(yy * w + xx)) horizGrid[yy * w + xx] = 1;
           }
-          if (labels[y * w + xx] === -1 && vertThickAt(xx, y) <= maxThick) {
+          if (labels[y * w + xx] === -1 && vertThickAt(xx, y) <= horizMaxThick) {
             drop[y * w + xx] = 1;
           } else if (!isLine(y * w + xx)) {
             for (const dy of [-1, 1]) {
               const yy = y + dy;
-              if (yy >= 0 && yy < h && labels[yy * w + xx] === -1 && vertThickAt(xx, yy) <= maxThick) {
+              if (yy >= 0 && yy < h && labels[yy * w + xx] === -1 && vertThickAt(xx, yy) <= horizMaxThick) {
                 drop[yy * w + xx] = 1;
               }
             }
@@ -269,7 +271,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         if (yy < 0 || yy >= h) continue;
         if (isLine(yy * w + x)) {
           hasNear = true;
-          if (vertThickAt(x, yy) <= maxThick) thinNear = true;
+          if (vertThickAt(x, yy) <= horizMaxThick) thinNear = true;
         }
       }
       if (hasNear) {
@@ -377,14 +379,15 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
   // Apply horizontal and badge removals to `labels` now so grid intersections (+ / T corners)
   // are no longer wide horizontally when vertical grid lines are measured in step 3.
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
-  const isVertLine = (idx: number) => !badgeInterior[idx] && isLine(idx);
+  console.log('[v0] pen:', pen, 'horizMaxThick:', horizMaxThick, 'vertMaxThick:', vertMaxThick);
+  const vertCut = Math.min(212, Math.max(threshold + 25, 195));
+  const isVertLine = (idx: number) => !badgeInterior[idx] && (labels[idx] === -1 || gray[idx] <= vertCut);
 
   // 3) Vertical grid lines (cell dividers): erase columns that bridge directly between two
-  // horizontal grid lines (or span a large share of the image height), keeping letter stems intact.
+  // horizontal grid lines, keeping all letter stems and standalone vertical glyphs (|) intact.
   const minVertSpan = Math.max(22, Math.round(h * 0.035));
-  const maxVertGap = 2;
-  const veryTallRun = Math.max(90, Math.round(h * 0.22));
-  const wideCheckLimit = maxThick * 3;
+  const maxVertGap = 1;
+  const wideCheckLimit = vertMaxThick * 3;
   const wideHorizAt = (x: number, y: number): number => {
     let x0 = x;
     while (x0 > 0 && labels[y * w + (x0 - 1)] === -1 && x - (x0 - 1) <= wideCheckLimit) x0--;
@@ -404,6 +407,9 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     return false;
   };
 
+  interface VertCandidate { x: number; y0: number; y1: number; multiRow: boolean }
+  const vertCandidates: VertCandidate[] = [];
+
   for (let x = 0; x < w; x++) {
     let runStart = -1;
     let lastInkY = -1;
@@ -412,31 +418,39 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     let thinRowsCount = 0;
     const flushVert = (endY: number) => {
       const span = endY - runStart;
-      if (runStart >= 0 && span >= minVertSpan && selfRowsCount >= span * 0.55 && inkRowsCount >= span * 0.82 && thinRowsCount >= span * 0.72) {
+      if (runStart >= 0 && span >= minVertSpan && selfRowsCount >= span * 0.6 && inkRowsCount >= span * 0.85 && thinRowsCount >= span * 0.78) {
         const topTouch = touchesHorizNear(x, runStart);
         const botTouch = touchesHorizNear(x, endY - 1);
-        let wideInterior = 0;
-        let interiorRows = 0;
-        for (let yy = runStart; yy < endY; yy++) {
-          if (touchesHorizNear(x, yy)) continue;
-          interiorRows++;
-          if (wideHorizAt(x, yy) > maxThick + 2) wideInterior++;
-        }
-        const innerSpan = Math.max(1, interiorRows);
-        const isCellWall = topTouch && botTouch && wideInterior <= Math.max(1, Math.round(innerSpan * 0.03));
-        const isLongBorder = span >= veryTallRun && (topTouch || botTouch) && thinRowsCount >= span * 0.85 && wideInterior <= Math.max(2, Math.round(innerSpan * 0.05));
-        if (isCellWall || isLongBorder) {
+        if (topTouch && botTouch) {
+          let wideInterior = 0;
+          let flankBoth = 0;
+          let interiorRows = 0;
+          let midHorizCrossings = 0;
+          let inHorizBand = true;
           for (let yy = runStart; yy < endY; yy++) {
-            if (labels[yy * w + x] === -1 && horizThickAt(x, yy) <= maxThick) {
-              drop[yy * w + x] = 1;
-            } else if (!isVertLine(yy * w + x)) {
-              for (const dx of [-1, 1]) {
-                const xx = x + dx;
-                if (xx >= 0 && xx < w && labels[yy * w + xx] === -1 && horizThickAt(xx, yy) <= maxThick) {
-                  drop[yy * w + xx] = 1;
-                }
-              }
+            const onH = touchesHorizNear(x, yy);
+            if (onH) {
+              if (!inHorizBand && yy > runStart + 10 && yy < endY - 10) midHorizCrossings++;
+              inHorizBand = true;
+              continue;
             }
+            inHorizBand = false;
+            if (yy < runStart + 3 || yy >= endY - 3) continue;
+            interiorRows++;
+            if (wideHorizAt(x, yy) > vertMaxThick + 1) wideInterior++;
+            let hasL = false, hasR = false;
+            for (let d = 2; d <= vertMaxThick + 4; d++) {
+              if (x - d >= 0 && labels[yy * w + (x - d)] === -1) hasL = true;
+              if (x + d < w && labels[yy * w + (x + d)] === -1) hasR = true;
+            }
+            if (hasL && hasR) flankBoth++;
+          }
+          const innerSpan = Math.max(1, interiorRows);
+          const multiRow = midHorizCrossings >= 1;
+          const validMultiRow = multiRow && wideInterior <= Math.max(2, Math.round(innerSpan * 0.05));
+          const validSingleRow = !multiRow && wideInterior === 0 && flankBoth <= 1;
+          if (validMultiRow || validSingleRow) {
+            vertCandidates.push({ x, y0: runStart, y1: endY, multiRow });
           }
         }
       }
@@ -456,7 +470,7 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
         if (xx < 0 || xx >= w) continue;
         if (isVertLine(y * w + xx)) {
           hasNear = true;
-          if (horizThickAt(xx, y) <= maxThick) thinNear = true;
+          if (horizThickAt(xx, y) <= vertMaxThick) thinNear = true;
         }
       }
       if (hasNear) {
@@ -472,7 +486,103 @@ function stripGridLines(labels: Int32Array, gray: Uint8Array, threshold: number,
     if (runStart >= 0) flushVert(lastInkY + 1);
   }
 
+  // Filter out any single-row vertical stroke (such as '|' or '1') that sits inside a cell
+  // bounded on both left and right by multi-row vertical borders of the same table section.
+  const maxCellW = Math.round(w * 0.12);
+  for (const vc of vertCandidates) {
+    if (!vc.multiRow) {
+      const midY = (vc.y0 + vc.y1) >> 1;
+      let leftWall = -1;
+      let rightWall = -1;
+      for (const other of vertCandidates) {
+        if (!other.multiRow || other.y0 > midY || other.y1 < midY) continue;
+        if (other.x < vc.x - 6 && (leftWall < 0 || other.x > leftWall)) leftWall = other.x;
+        if (other.x > vc.x + 6 && (rightWall < 0 || other.x < rightWall)) rightWall = other.x;
+      }
+      if (leftWall >= 0 && rightWall >= 0 && rightWall - leftWall <= maxCellW) continue;
+    }
+    for (let yy = vc.y0; yy < vc.y1; yy++) {
+      if (labels[yy * w + vc.x] === -1 && horizThickAt(vc.x, yy) <= vertMaxThick) {
+        drop[yy * w + vc.x] = 1;
+      } else if (!isVertLine(yy * w + vc.x)) {
+        for (const dx of [-1, 1]) {
+          const xx = vc.x + dx;
+          if (xx >= 0 && xx < w && labels[yy * w + xx] === -1 && horizThickAt(xx, yy) <= vertMaxThick) {
+            drop[yy * w + xx] = 1;
+          }
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < w * h; i++) if (drop[i]) labels[i] = 0;
+
+  // 4) Erase tiny printed guide characters centered directly on horizontal cell borders
+  // (e.g. the miniature printed A..Z, a..z, 0..9, @, ;, :, !, ? sitting in the border line break).
+  const borderRows: number[] = [];
+  for (let y = 0; y < h; y++) {
+    let count = 0;
+    for (let x = 0; x < w; x++) if (horizGrid[y * w + x]) count++;
+    if (count >= minHorizSpan * 0.5) {
+      if (!borderRows.length || y - borderRows[borderRows.length - 1] > 8) borderRows.push(y);
+    }
+  }
+  if (borderRows.length >= 2) {
+    const rowGaps = borderRows.slice(1).map((y, i) => y - borderRows[i]).filter((d) => d >= 20 && d <= h * 0.35);
+    const typCellH = median(rowGaps) || 50;
+    const maxGuideH = Math.max(9, Math.min(18, Math.round(typCellH * 0.24)));
+    const maxGuideW = Math.max(12, Math.min(28, Math.round(w * 0.032)));
+    for (const yb of borderRows) {
+      const yLo = Math.max(0, yb - Math.ceil(maxGuideH * 0.6));
+      const yHi = Math.min(h - 1, yb + Math.ceil(maxGuideH * 0.65));
+      for (let x = 0; x < w; x++) {
+        // Look for small isolated ink clusters straddling yb that do not extend into the cell body below yHi.
+        if (labels[yb * w + x] !== -1 && (yb + 1 >= h || labels[(yb + 1) * w + x] !== -1) && (yb <= 0 || labels[(yb - 1) * w + x] !== -1)) continue;
+        let xEnd = x;
+        while (xEnd < w && xEnd - x <= maxGuideW + 4) {
+          let hasCol = false;
+          for (let yy = yLo; yy <= yHi; yy++) if (labels[yy * w + xEnd] === -1) { hasCol = true; break; }
+          if (!hasCol) break;
+          xEnd++;
+        }
+        const bw = xEnd - x;
+        if (bw >= 1 && bw <= maxGuideW) {
+          let minY = h, maxY = -1;
+          let touchesOutside = false;
+          for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, xEnd); xx++) {
+            if (yLo > 0 && labels[(yLo - 1) * w + xx] === -1) touchesOutside = true;
+            if (yHi + 1 < h && labels[(yHi + 1) * w + xx] === -1) touchesOutside = true;
+            for (let yy = yLo; yy <= yHi; yy++) {
+              if (labels[yy * w + xx] === -1) {
+                if (yy < minY) minY = yy;
+                if (yy > maxY) maxY = yy;
+              }
+            }
+          }
+          // Only erase if the mark straddles the border line (`minY <= yb + 1`) and is self-contained within [yLo, yHi],
+          // AND there is real glyph ink deeper inside the cell below it.
+          if (!touchesOutside && minY <= yb + 1 && maxY - minY + 1 <= maxGuideH) {
+            let hasGlyphBelow = false;
+            const checkY0 = yHi + 2;
+            const checkY1 = Math.min(h - 1, yb + Math.round(typCellH * 0.88));
+            const checkX0 = Math.max(0, x - Math.round(maxGuideW * 0.8));
+            const checkX1 = Math.min(w - 1, xEnd + Math.round(maxGuideW * 0.8));
+            for (let yy = checkY0; yy <= checkY1 && !hasGlyphBelow; yy++) {
+              for (let xx = checkX0; xx <= checkX1; xx++) {
+                if (labels[yy * w + xx] === -1) { hasGlyphBelow = true; break; }
+              }
+            }
+            if (hasGlyphBelow) {
+              for (let yy = minY; yy <= maxY; yy++) {
+                for (let xx = x; xx < xEnd; xx++) labels[yy * w + xx] = 0;
+              }
+            }
+          }
+        }
+        x = Math.max(x, xEnd - 1);
+      }
+    }
+  }
 }
 
 /**
@@ -803,8 +913,10 @@ function attachMarks(ink: InkMap, pieces: Piece[], text: string): Piece[] {
         if (q.y0 - p.y1 > stackGap || minInkDist > stackGap) continue;
         if (gap > maxGap) continue;
       } else {
-        // Detached crossbar, hook, or tail touching or overlapping the glyph's stem/body.
-        if (gap > 1 || minInkDist > 3 || p.y0 > q.y1 + 3) continue;
+        // Detached crossbar, hook, tail, or enclosed mark (like the circles of % or ÷ inside the slash box).
+        const combinedW = Math.max(p.x1, q.x1) - Math.min(p.x0, q.x0) + 1;
+        const insideBox = p.y0 >= q.y0 - 2 && p.y1 <= q.y1 + 3 && gap <= 3 && combinedW <= widthMedian * 1.55;
+        if (!insideBox && (gap > 2 || minInkDist > 4 || p.y0 > q.y1 + 3)) continue;
       }
       // Among touching candidates, the one most directly aligned with the mark wins.
       const overlap = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) + 1) / (p.x1 - p.x0 + 1);
@@ -1095,8 +1207,16 @@ function inkRows(ink: InkMap, text: string): Piece[][] | null {
       seenIds.add(id);
     }
   }
+  const lineTexts = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const rows = buckets.map((ids, i) =>
-    clusterRow(ink, ids, text, true, ids.some((id) => sharedIds.has(id)) ? bands[i] : undefined, sharedIds),
+    clusterRow(
+      ink,
+      ids,
+      lineTexts.length === buckets.length ? lineTexts[i] : text,
+      true,
+      ids.some((id) => sharedIds.has(id)) ? bands[i] : undefined,
+      sharedIds,
+    ),
   );
   // Ruling lines and underlines: long, flat strokes spanning many letters.
   const widthMedian = median(rows.flat().map((p) => p.x1 - p.x0 + 1)) || 1;
@@ -1461,6 +1581,45 @@ function normalizeSymbolTokens(line: string, targetCount?: number): string {
 
 const SECTION_HEADER_RE = /^(uppercase(\s+letters)?|lowercase(\s+letters)?|numbers|digits|punctuation(\s*(&|and)\s*symbols)?|symbols|math(\s*\/\s*special\s*glyphs)?|special\s+glyphs|ligatures|sample\s+text|pangrams?)$/i;
 
+const TEMPLATE_LINES = [
+  'A B C D E F G H I J K L M',
+  'N O P Q R S T U V W X Y Z',
+  'a b c d e f g h i j k l m',
+  'n o p q r s t u v w x y z',
+  '0 1 2 3 4 5 6 7 8 9',
+  '. , ; : ! ? \' " ( ) - _ / \\ | @ # $ % &',
+  '* + = < > ≤ ≥ ~ ^ ` [ ] { } , . ₹ € ™ ®',
+  '* + = < > ≤ ≥ ~ ^ ` [ ] { } , ₹ € ™ ®',
+];
+
+function snapToTemplateLine(line: string, atomCount?: number): string {
+  const letters = lettersOf(line);
+  if (letters.length < 8) return line;
+  let best = line;
+  let bestScore = 0;
+  for (const tmpl of TEMPLATE_LINES) {
+    const tLetters = lettersOf(tmpl);
+    if (Math.abs(letters.length - tLetters.length) > 3) continue;
+    if (atomCount !== undefined && Math.abs(tLetters.length - atomCount) > Math.abs(letters.length - atomCount) + 2) continue;
+    // Longest common subsequence similarity
+    const n = letters.length;
+    const m = tLetters.length;
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = letters[i] === tLetters[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const lcs = dp[0][0];
+    const ratio = lcs / Math.max(n, m);
+    if (ratio >= 0.75 && ratio > bestScore) {
+      bestScore = ratio;
+      best = tmpl;
+    }
+  }
+  return best;
+}
+
 /**
  * Recognizes standard handwriting glyph sheet templates (full 7-row sheets or cropped
  * sections of Uppercase, Lowercase, Numbers, and Punctuation & Symbols) directly from
@@ -1494,6 +1653,7 @@ export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string
 
   // Quick row-band count check so we only evaluate candidates matching the image's line count.
   const bandCheck = inkRows(ink, '1\n2\n3\n4\n5\n6\n7');
+  console.log('[v0] bandCheck:', bandCheck?.map((r) => ({ len: r.length, y0: r[0]?.y0, y1: r[0]?.y1, x0: r[0]?.x0, x1: r[0]?.x1 })));
   if (!bandCheck || bandCheck.length < 2) return null;
 
   let bestResult: (Segmentation & { text: string }) | null = null;
@@ -1508,7 +1668,7 @@ export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string
     const countsMatch = rows.every((r, idx) => {
       const target = lettersOf(lines[idx]).length;
       atomDiff += Math.abs(r.length - target);
-      return r.length >= target - 3 && r.length <= target + 9;
+      return r.length >= target - 4 && r.length <= target + 14;
     });
     if (!countsMatch) continue;
     const text = lines.join('\n');
@@ -1516,7 +1676,7 @@ export function detectGlyphTemplate(ink: InkMap): (Segmentation & { text: string
     if (seg.error || seg.rows.length !== lines.length || !seg.rows.every(rowMatched)) continue;
     const totalExpected = lines.reduce((n, l) => n + lettersOf(l).length, 0);
     const missingCount = seg.missing?.length ?? 0;
-    if (missingCount > Math.max(2, Math.floor(totalExpected * 0.06))) continue;
+    if (missingCount > Math.max(3, Math.floor(totalExpected * 0.08))) continue;
     const matchedCount = seg.rows.reduce((n, r) => n + r.letters.length, 0);
     const score = matchedCount * 20 - missingCount * 50 - atomDiff * 5;
     if (score > bestScore) {
@@ -1550,7 +1710,10 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   });
   const finalRows = inkRows(ink, expandedLines.map((l) => l.text).join('\n')) ?? prelimRows;
   const lines = expandedLines
-    .map((l, idx) => ({ ...l, text: normalizeSymbolTokens(l.text.trim(), finalRows[idx]?.length) }))
+    .map((l, idx) => {
+      const norm = normalizeSymbolTokens(l.text.trim(), finalRows[idx]?.length);
+      return { ...l, text: snapToTemplateLine(norm, finalRows[idx]?.length) };
+    })
     .filter((l) => l.text);
   const text = lines.map((l) => l.text).join('\n');
   if (!lines.length) return { rows: [], error: 'AI did not find any characters.', text, source: 'text' };
@@ -1570,13 +1733,13 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
       raw.push({ cx: ((x0 + x1) / 2) * ink.width, cy: ((y0 + y1) / 2) * ink.height, line: lineNo });
     });
   });
+  const tmpl = detectGlyphTemplate(ink);
   if (!raw.some(Boolean)) {
     const matched = matchLetters(ink, rows, letters, keep);
-    const tmpl = detectGlyphTemplate(ink);
     if (tmpl) {
       const matchedGlyphs = matched.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0) - (matched.missing?.length ?? 0) * 2;
       const tmplGlyphs = tmpl.rows.reduce((n, r) => n + (rowMatched(r) ? r.letters.length : 0), 0) - (tmpl.missing?.length ?? 0) * 2;
-      if (matched.error || tmplGlyphs > matchedGlyphs) {
+      if (matched.error || tmplGlyphs >= matchedGlyphs) {
         return { ...tmpl, source: 'text' };
       }
     }
@@ -1587,7 +1750,7 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   const placed: { letter: number; piece: Piece }[] = [];
   const plain = matchLetters(ink, rows, letters, keep, placed);
   const hints = calibrateHints(raw, placed);
-  if (hints) {
+  if (hints && (!tmpl || (plain.missing?.length ?? 0) === 0)) {
     const calLetters = letters.map((l, i) => (hints[i] ? { ...l, hint: hints[i] } : { ...l }));
     return { ...matchLetters(ink, rows, calLetters, keep), text, source: 'boxes' };
   }
@@ -1628,14 +1791,15 @@ export function segmentWithAi(ink: InkMap, aiLines: AiLine[]): Segmentation & { 
   const rawSeg = matchLetters(ink, rows, rawLetters, keep, rawPlaced);
   const boxed = segmentFromBoxes(ink, lines);
 
-  const candidates: { seg: Segmentation; source: 'text' | 'boxes'; score: number }[] = [
-    { seg: rawSeg, source: 'boxes', score: scoreCandidate(rawSeg, rawPlaced) },
-    ...(boxed.rows.length ? [{ seg: boxed, source: 'boxes' as const, score: scoreCandidate(boxed) }] : []),
-    { seg: plain, source: 'text', score: scoreCandidate(plain, placed) },
+  const candidates: { seg: Segmentation; text: string; source: 'text' | 'boxes'; score: number }[] = [
+    { seg: rawSeg, text, source: 'boxes', score: scoreCandidate(rawSeg, rawPlaced) },
+    ...(boxed.rows.length ? [{ seg: boxed, text, source: 'boxes' as const, score: scoreCandidate(boxed) }] : []),
+    { seg: plain, text, source: 'text', score: scoreCandidate(plain, placed) },
+    ...(tmpl ? [{ seg: tmpl, text: tmpl.text, source: 'text' as const, score: scoreCandidate(tmpl) + 500 }] : []),
   ];
   candidates.sort((a, b) => b.score - a.score);
   const best = candidates[0];
-  return { ...best.seg, text, source: best.source };
+  return { ...best.seg, text: best.text, source: best.source };
 }
 
 /** Least-squares line through points, or null when x has no spread. */
