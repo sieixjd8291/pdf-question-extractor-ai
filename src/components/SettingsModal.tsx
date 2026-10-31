@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Settings2, Info, Sun, Moon, Monitor, Sparkles, ExternalLink, CheckCircle2, KeyRound, Eye, EyeOff, BookOpen, Scissors, FileCode2, Zap, Camera, Compass, RefreshCcw } from 'lucide-react';
+import { Settings2, Info, Sun, Moon, Monitor, Sparkles, ExternalLink, CheckCircle2, KeyRound, Eye, EyeOff, BookOpen, Scissors, FileCode2, Zap, Camera, Compass, RefreshCcw, Crop } from 'lucide-react';
 import { ExtractionSettings } from '../types';
 import { SCAN_QUALITY_PRESETS } from '../lib/scannerFilters';
 import { Modal } from './Modal';
@@ -381,6 +381,43 @@ export function SettingsModal({ settings, onUpdateSettings, onClose, initialTab 
                 >
                   <RefreshCcw size={13} />
                   <span>Auto-orient all pages</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary btn-sm flex items-center gap-1.5"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('camscanner-auto-crop-all'));
+                    onClose();
+                  }}
+                  title="Detect page edges and crop all pages"
+                >
+                  <Crop size={13} />
+                  <span>Auto-crop all pages</span>
+                </button>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Automatic processing</legend>
+              <p>Applied automatically to every photo, capture and PDF page you add.</p>
+              <div className="setting-grid two">
+                <button
+                  type="button"
+                  className={'setting-choice ' + (settings.scanAutoOrientOnImport !== false ? 'selected' : '')}
+                  aria-pressed={settings.scanAutoOrientOnImport !== false}
+                  onClick={() => onUpdateSettings({ scanAutoOrientOnImport: settings.scanAutoOrientOnImport === false })}
+                >
+                  <strong>Auto-orientation {settings.scanAutoOrientOnImport !== false ? 'on' : 'off'}</strong>
+                  <span>Rotate sideways or upside-down pages upright on import</span>
+                </button>
+                <button
+                  type="button"
+                  className={'setting-choice ' + (settings.scanAutoCropOnImport !== false ? 'selected' : '')}
+                  aria-pressed={settings.scanAutoCropOnImport !== false}
+                  onClick={() => onUpdateSettings({ scanAutoCropOnImport: settings.scanAutoCropOnImport === false })}
+                >
+                  <strong>Auto-detect & crop {settings.scanAutoCropOnImport !== false ? 'on' : 'off'}</strong>
+                  <span>Detect page edges and crop automatically — no Auto detect click needed</span>
                 </button>
               </div>
             </fieldset>

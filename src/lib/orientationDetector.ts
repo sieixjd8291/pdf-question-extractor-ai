@@ -1418,7 +1418,8 @@ export async function autoFixImageOrientation(
   quality: number = 0.92,
   rawFileBytes?: ArrayBuffer | Uint8Array,
   maxEdge?: number,
-  quad?: ScanQuad | null
+  quad?: ScanQuad | null,
+  detectOrientation = true
 ): Promise<{
   dataUrl: string;
   width: number;
@@ -1442,7 +1443,7 @@ export async function autoFixImageOrientation(
     exifInfo = extractExifOrientation(rawFileBytes);
   }
 
-  try {
+  if (detectOrientation) try {
     const orientRes = await detectDocumentOrientation(source, 0, quad);
     const delta = orientRes.rotationDelta || 0;
 

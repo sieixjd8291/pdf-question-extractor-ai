@@ -21,8 +21,15 @@ function insetEdgeCount(q: ScanQuad): number {
 }
 
 /** Only verified page boundaries are applied without the user's review. */
-export function automaticDocumentQuad(result: DocumentDetectionResult, sourceKind: SourceKind): ScanQuad | null {
+export function automaticDocumentQuad(result: DocumentDetectionResult, sourceKind: SourceKind, matchManualDetect = false): ScanQuad | null {
   const q = result.quad;
+  // Auto-crop setting: apply the same outline the manual "Auto detect" button would, so photos never need that extra click.
+  if (matchManualDetect && sourceKind === 'photo' && q && isSaneQuad(q) &&
+      Object.values(q).every(point => Number.isFinite(point.x) && Number.isFinite(point.y) &&
+        point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)) {
+    const area = quadArea(q);
+    return area >= 0.08 && area < 0.995 && insetEdgeCount(q) >= 1 ? q : null;
+  }
   if (!q || result.quality !== 'strong' || !isSaneQuad(q)) return null;
   if (Object.values(q).some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
       point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1)) return null;

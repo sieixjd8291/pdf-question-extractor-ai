@@ -104,4 +104,5 @@ export interface ExtractionSettings {
   scanPageSize?: ScanPageSize;
   scanMargin?: ScanMargin;
   scanAutoOrientOnImport?: boolean;
+  scanAutoCropOnImport?: boolean;
 }
