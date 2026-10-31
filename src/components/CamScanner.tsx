@@ -168,6 +168,8 @@ interface CamScannerProps {
   customQuality?: number;
   pageSize?: ScanPageSize;
   margin?: ScanMargin;
+  autoOrient?: boolean;
+  autoCrop?: boolean;
   onChangeAppMode?: (mode: AppMode) => void;
 }
 
@@ -324,8 +326,12 @@ function RenameDialog({ initial, onDone, onClose }: {
   );
 }
 
-export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pageSize = 'fit', margin = 'none', onChangeAppMode }: CamScannerProps) {
+export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pageSize = 'fit', margin = 'none', autoOrient = true, autoCrop = true, onChangeAppMode }: CamScannerProps) {
   const toast = useToast();
+  const autoOrientRef = useRef(autoOrient);
+  const autoCropRef = useRef(autoCrop);
+  autoOrientRef.current = autoOrient;
+  autoCropRef.current = autoCrop;
 
   const [pages, setPages] = useState<ScanPage[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -563,12 +569,13 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     knownRotation: ScanPage['rotation'] = 0,
     sourceKind: ScanPage['sourceKind'] = 'photo'
   ): Promise<boolean> => {
+    if (!autoCropRef.current) return Promise.resolve(false);
     const version = pageDetectionVersionRef.current.get(pageId) ?? 0;
     const job = autoCropQueueRef.current.then(async (): Promise<boolean> => {
       try {
         const result = await detectDocumentCached(url, knownRotation);
         if ((pageDetectionVersionRef.current.get(pageId) ?? 0) !== version) return false;
-        const quad = automaticDocumentQuad(result, sourceKind);
+        const quad = automaticDocumentQuad(result, sourceKind, true);
         if (!quad) return false;
         setPages((prev) => prev.map((p) => {
           if (p.id !== pageId || p.quad || p.cropRevision > 0 || p.originalUrl !== url || p.rotation !== knownRotation ||
@@ -589,7 +596,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
   const autoCropBatch = useCallback(async (
     jobs: Array<{ id: string; url: string; rotation: ScanPage['rotation']; sourceKind: ScanPage['sourceKind'] }>
   ) => {
-    if (jobs.length === 0) return;
+    if (jobs.length === 0 || !autoCropRef.current) return;
     let done = 0;
     setAutoCropStatus(`Detecting page edges 0/${jobs.length}…`);
     const outcomes = await Promise.all(jobs.map(async (job) => {
@@ -646,7 +653,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
           onPage: async (p, thumbUrl) => {
             let finalDataUrl = p.dataUrl;
             let finalThumb = thumbUrl;
-            try {
+            if (autoOrientRef.current) try {
               const pImg = await decodeImage(p.dataUrl);
               const fixRes = await autoFixImageOrientation(pImg, 0.88);
               if (fixRes.wasRotated) {
@@ -757,13 +764,13 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
               ]);
 
               let quad: ScanQuad | null = null;
-              try {
+              if (autoCropRef.current) try {
                 const detection = await detectDocumentCached(url, 0);
-                quad = automaticDocumentQuad(detection, 'photo');
+                quad = automaticDocumentQuad(detection, 'photo', true);
               } catch {
                 // A detection failure must not discard a readable photo.
               }
-              const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), quad);
+              const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), quad, autoOrientRef.current);
               const wasFixed = fixRes.wasRotated || fixRes.wasFlipped;
               if (quad && fixRes.appliedDelta !== 0) {
                 quad = rotateQuad(quad, fixRes.appliedDelta === 90 ? 1 : fixRes.appliedDelta === 180 ? 2 : -1);
@@ -855,10 +862,10 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
             );
           }
           const cropped = batch.filter((item) => item.quad !== null).length;
-          if (cropped > 0) {
+          if (autoCropRef.current && cropped > 0) {
             toast.success(`Auto-cropped ${cropped} of ${batch.length} pictures. Tap Crop to fine-tune.`);
           }
-          if (cropped < batch.length) {
+          if (autoCropRef.current && cropped < batch.length) {
             toast.info(`${batch.length - cropped} picture(s) need crop review — no clear page boundary found.`);
           }
         }
@@ -1409,7 +1416,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     try {
       const rawDataUrl = await captureCanvasToDataUrl(video, video.videoWidth, video.videoHeight, importMaxEdge());
       const img = await decodeImage(rawDataUrl);
-      const fixRes = await autoFixImageOrientation(img, 0.92);
+      const fixRes = await autoFixImageOrientation(img, 0.92, undefined, undefined, null, autoOrientRef.current);
       const pageId = addPageFromDataUrl(fixRes.dataUrl, `Scan ${pages.length + 1}`);
       void autoCropPage(pageId, fixRes.dataUrl, 0);
       toast.success(
@@ -1640,7 +1647,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     void (async () => {
       try {
         const engine = await initEdgeSnapEngine(activePage);
-        const quad = engine && automaticDocumentQuad(engine.detection, activePage.sourceKind);
+        const quad = autoCropRef.current && engine && automaticDocumentQuad(engine.detection, activePage.sourceKind, true);
         if (quad && !activePage.quad && activePage.cropRevision === 0 && cropSessionRef.current === session && cropEditRef.current === edit && !cropDragRef.current) {
           setCropDraft(quad);
         }
@@ -2125,14 +2132,47 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     }
   };
 
+  const autoCropAllPages = async () => {
+    if (pages.length === 0) return;
+    let croppedCount = 0;
+    try {
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        setBusy(`Detecting page edges ${i + 1} of ${pages.length}…`);
+        const result = await detectDocumentCached(p.originalUrl, p.rotation);
+        const quad = automaticDocumentQuad(result, p.sourceKind, true);
+        if (!quad) continue;
+        croppedCount++;
+        setPages((prev) => prev.map((item) =>
+          item.id === p.id && item.originalUrl === p.originalUrl && item.rotation === p.rotation ? { ...item, quad } : item
+        ));
+      }
+      displayedSigRef.current = null;
+      previewReadyRef.current = false;
+      if (croppedCount > 0) {
+        toast.success(`Auto-cropped ${croppedCount} of ${pages.length} page${pages.length === 1 ? '' : 's'}.`);
+      } else {
+        toast.info('No clear page edges found. Open Crop to set them manually.');
+      }
+    } catch (err: any) {
+      console.error('Auto crop all failed:', err);
+      toast.error('Auto-crop failed on one or more pages.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   useEffect(() => {
     const handleActive = () => { void autoOrientActivePage(); };
     const handleAll = () => { void autoOrientAllPages(); };
+    const handleCropAll = () => { void autoCropAllPages(); };
     window.addEventListener('camscanner-auto-orient-active', handleActive);
     window.addEventListener('camscanner-auto-orient-all', handleAll);
+    window.addEventListener('camscanner-auto-crop-all', handleCropAll);
     return () => {
       window.removeEventListener('camscanner-auto-orient-active', handleActive);
       window.removeEventListener('camscanner-auto-orient-all', handleAll);
+      window.removeEventListener('camscanner-auto-crop-all', handleCropAll);
     };
   });
 

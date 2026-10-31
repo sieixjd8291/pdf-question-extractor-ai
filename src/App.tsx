@@ -160,7 +160,7 @@ export default function App() {
       const saved=JSON.parse(localStorage.getItem('pdf-studio-settings')||'{}');
       // Mobile browsers crash on very high-resolution canvas buffers — cap render scale there
       const mobileCap = isIosLikeBrowser() || window.matchMedia('(pointer: coarse)').matches ? 2 : 3;
-      return {...defaults,latexAutoRepair:saved.latexAutoRepair !== false,renderScale:Math.min(saved.renderScale===3?3:2, mobileCap),namingScheme:['index','label','page_index'].includes(saved.namingScheme)?saved.namingScheme:'index',defaultExportFormat:['jpg','png','pdf'].includes(saved.defaultExportFormat)?saved.defaultExportFormat:'jpg',scanQualityPreset:['small','balanced','best','custom'].includes(saved.scanQualityPreset)?saved.scanQualityPreset:(typeof saved.scanQuality==='number'?'custom':'balanced'),scanQuality:typeof saved.scanQuality==='number'&&saved.scanQuality>=40&&saved.scanQuality<=100?Math.round(saved.scanQuality):80,scanPageSize:['a4','letter','fit'].includes(saved.scanPageSize)?saved.scanPageSize:'fit',scanMargin:['none','small','normal'].includes(saved.scanMargin)?saved.scanMargin:'none'};
+      return {...defaults,latexAutoRepair:saved.latexAutoRepair !== false,renderScale:Math.min(saved.renderScale===3?3:2, mobileCap),namingScheme:['index','label','page_index'].includes(saved.namingScheme)?saved.namingScheme:'index',defaultExportFormat:['jpg','png','pdf'].includes(saved.defaultExportFormat)?saved.defaultExportFormat:'jpg',scanQualityPreset:['small','balanced','best','custom'].includes(saved.scanQualityPreset)?saved.scanQualityPreset:(typeof saved.scanQuality==='number'?'custom':'balanced'),scanQuality:typeof saved.scanQuality==='number'&&saved.scanQuality>=40&&saved.scanQuality<=100?Math.round(saved.scanQuality):80,scanPageSize:['a4','letter','fit'].includes(saved.scanPageSize)?saved.scanPageSize:'fit',scanMargin:['none','small','normal'].includes(saved.scanMargin)?saved.scanMargin:'none',scanAutoOrientOnImport:saved.scanAutoOrientOnImport!==false,scanAutoCropOnImport:saved.scanAutoCropOnImport!==false};
     } catch {return defaults;}
   });
   useEffect(()=>{try {localStorage.setItem('pdf-studio-settings',JSON.stringify(settings));}catch{}},[settings]);
@@ -773,7 +773,10 @@ export default function App() {
             qualityPreset={settings.scanQualityPreset}
             customQuality={settings.scanQuality}
             pageSize={settings.scanPageSize}
-            margin={settings.scanMargin}
+                  margin={settings.scanMargin}
+                  autoOrient={settings.scanAutoOrientOnImport !== false}
+                  autoCrop={settings.scanAutoCropOnImport !== false}
+
             onChangeAppMode={handleModeChangeRequest}
           />
         ) : (
