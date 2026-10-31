@@ -763,14 +763,17 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                 file.arrayBuffer().catch(() => undefined),
               ]);
 
-              let quad: ScanQuad | null = null;
-              if (autoCropRef.current) try {
-                const detection = await detectDocumentCached(url, 0);
-                quad = automaticDocumentQuad(detection, 'photo', true);
-              } catch {
-                // A detection failure must not discard a readable photo.
-              }
-              const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), quad, autoOrientRef.current);
+  let quad: ScanQuad | null = null;
+  // Orientation only trusts a high-confidence outline; a loose crop outline can mislead the text-direction check.
+  let orientationQuad: ScanQuad | null = null;
+  try {
+  const detection = await detectDocumentCached(url, 0);
+  orientationQuad = automaticDocumentQuad(detection, 'photo');
+  if (autoCropRef.current) quad = automaticDocumentQuad(detection, 'photo', true);
+  } catch {
+  // A detection failure must not discard a readable photo.
+  }
+  const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), orientationQuad, autoOrientRef.current);
               const wasFixed = fixRes.wasRotated || fixRes.wasFlipped;
               if (quad && fixRes.appliedDelta !== 0) {
                 quad = rotateQuad(quad, fixRes.appliedDelta === 90 ? 1 : fixRes.appliedDelta === 180 ? 2 : -1);
@@ -2065,7 +2068,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     setBusy('Detecting orientation…');
     try {
       const img = await loadImageFromUrl(activePage.originalUrl);
-      const res = await detectDocumentOrientation(img, activePage.rotation, activePage.quad);
+      const res = await detectDocumentOrientation(img, activePage.rotation, activePage.cropRevision > 0 ? activePage.quad : null);
       const engineTag = `· ${res.source === 'ml' ? 'on-device model' : res.source === 'ai' ? 'server CV' : 'browser CV'} ${Math.round((res.confidence || 0) * 100)}%`;
       if (res.needsRotation && res.rotationDelta !== 0) {
         const delta = res.rotationDelta;
@@ -2096,7 +2099,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         const p = pages[i];
         setBusy(`Analyzing page ${i + 1} of ${pages.length}…`);
         const img = await loadImageFromUrl(p.originalUrl);
-        const res = await detectDocumentOrientation(img, p.rotation, p.quad);
+        const res = await detectDocumentOrientation(img, p.rotation, p.cropRevision > 0 ? p.quad : null);
         if (res.needsRotation && res.rotationDelta !== 0) {
           rotatedCount++;
           const delta = res.rotationDelta;
