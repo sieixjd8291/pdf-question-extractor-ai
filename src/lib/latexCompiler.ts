@@ -90,30 +90,46 @@ async function compileOnWeb(
   tex: string,
   files?: ResourceFile[]
 ): Promise<{ pdf: Blob; engine: string; via: 'web'; log: string }> {
-  const form = new FormData();
-  form.append('resources[]', new Blob([tex], { type: 'text/x-tex' }), 'main.tex');
+  const magic = tex.match(/^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/im)?.[1]?.toLowerCase();
+  const compiler = magic === 'xelatex' || magic === 'lualatex' || magic === 'pdflatex'
+    ? magic
+    : /\\directlua\b|\\usepackage(?:\[[^\]]*\])?\{[^}]*\bluacode\b/.test(tex)
+      ? 'lualatex'
+      : /\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:fontspec|unicode-math|polyglossia|xeCJK|mathspec)\b|\\set(?:main|sans|mono)font\b/.test(tex)
+        ? 'xelatex'
+        : 'pdflatex';
+  const resources = [
+    { main: true, path: 'main.tex', content: tex },
+    ...(files || [])
+      .filter((f) => f && f.name && f.name !== 'main.tex' && typeof f.content === 'string')
+      .map((f) => ({ path: f.name, content: f.content })),
+  ];
 
-  if (Array.isArray(files)) {
-    for (const f of files) {
-      if (f && f.name && f.name !== 'main.tex' && typeof f.content === 'string') {
-        form.append('resources[]', new Blob([f.content], { type: 'text/plain' }), f.name);
-      }
-    }
-  }
-
-  const res = await fetch(FALLBACK_ENDPOINT, { method: 'POST', body: form });
+  const res = await fetch(FALLBACK_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      compiler,
+      resources,
+      options: { compiler: { halt_on_error: false, force: true }, response: { log_files_on_failure: true } },
+    }),
+  });
 
   if (res.ok) {
     const pdf = await res.blob();
     if (pdf.size === 0) throw new LaTeXCompileError('The compilation service returned an empty PDF.', '', 'web');
-    return { pdf, engine: 'pdflatex', via: 'web', log: '' };
+    return { pdf, engine: compiler, via: 'web', log: '' };
   }
 
   const detail = await res.text().catch(() => '');
   let log = detail;
   try {
     const parsed = JSON.parse(detail);
-    log = parsed?.log || parsed?.error || detail;
+    const logFiles = parsed?.log_files;
+    const captured = logFiles && typeof logFiles === 'object'
+      ? Object.values(logFiles).filter((v) => typeof v === 'string').join('\n')
+      : typeof logFiles === 'string' ? logFiles : '';
+    log = captured || parsed?.log || parsed?.error || detail;
   } catch {
     /* raw text */
   }

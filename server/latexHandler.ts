@@ -99,7 +99,21 @@ export interface CompileOutcome {
  * Fallback to server-side remote TeX compilation. Runs in Node without browser
  * CORS / CSP / ad-blocker interference.
  */
-export async function compileRemote(tex: string, files?: ResourceFile[], compiler: 'pdflatex' | 'xelatex' = 'pdflatex'): Promise<CompileOutcome> {
+type RemoteCompiler = 'pdflatex' | 'xelatex' | 'lualatex';
+
+export function detectPreferredCompiler(tex: string): RemoteCompiler {
+  const magic = tex.match(/^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/im)?.[1]?.toLowerCase();
+  if (magic === 'xelatex' || magic === 'lualatex' || magic === 'pdflatex') return magic;
+  if (/\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:luacode|luatextra|luacolor)\b/.test(tex) || /\\directlua\b/.test(tex)) return 'lualatex';
+  if (/\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:fontspec|unicode-math|polyglossia|xeCJK|xltxtra|xunicode|mathspec)\b/.test(tex)
+    || /\\documentclass(?:\[[^\]]*\])?\{(?:ctexart|ctexrep|ctexbook)\}/.test(tex)
+    || /\\set(?:main|sans|mono)font\b/.test(tex)) return 'xelatex';
+  return 'pdflatex';
+}
+
+const NEEDS_UNICODE_ENGINE = /requires either XeTeX or LuaTeX|fontspec error|Package fontspec Error|cannot be used with pdfTeX|Unicode character .* not set up for use with LaTeX|Invalid UTF-8 byte/i;
+
+export async function compileRemote(tex: string, files?: ResourceFile[], compiler: RemoteCompiler = detectPreferredCompiler(tex), triedFallback = false): Promise<CompileOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
@@ -110,7 +124,8 @@ export async function compileRemote(tex: string, files?: ResourceFile[], compile
         compiler,
         resources: [{ main: true, path: 'main.tex', content: tex },
           ...(files || []).filter(file => file.name !== 'main.tex').map(file => ({ path: file.name, content: file.content }))],
-        options: { compiler: { halt_on_error: true, force: false }, response: { log_files_on_failure: true } },
+        // Overleaf-style: keep going past recoverable errors and still emit the PDF.
+        options: { compiler: { halt_on_error: false, force: true }, response: { log_files_on_failure: true } },
       }),
       signal: controller.signal,
     });
@@ -144,22 +159,22 @@ export async function compileRemote(tex: string, files?: ResourceFile[], compile
     }
 
     const timedOut = /COMPILATION_TIMEOUT|compilation timed out/i.test(log);
-    if (timedOut && compiler === 'pdflatex') {
+    if (!triedFallback && (timedOut || (compiler === 'pdflatex' && NEEDS_UNICODE_ENGINE.test(log)))) {
       clearTimeout(timer);
-      return compileRemote(tex, files, 'xelatex');
+      return compileRemote(tex, files, compiler === 'pdflatex' ? 'xelatex' : 'pdflatex', true);
     }
     return {
       statusCode: timedOut ? 504 : 422,
       json: {
-        error: timedOut ? 'The online compiler timed out with both PDFLaTeX and XeLaTeX. No source changes were made.' : 'LaTeX compilation failed.',
+        error: timedOut ? 'The online compiler timed out. No source changes were made.' : 'LaTeX compilation failed.',
         log: tailLog(log),
       },
     };
   } catch (err: any) {
     const isTimeout = err?.name === "AbortError";
-    if (isTimeout && compiler === 'pdflatex') {
+    if (isTimeout && !triedFallback) {
       clearTimeout(timer);
-      return compileRemote(tex, files, 'xelatex');
+      return compileRemote(tex, files, compiler === 'pdflatex' ? 'xelatex' : 'pdflatex', true);
     }
     return {
       statusCode: isTimeout ? 504 : 502,
@@ -237,33 +252,33 @@ async function compileLatexUncached(tex: unknown, files?: ResourceFile[]): Promi
       if (Array.isArray(files)) {
         for (const file of files) {
           if (file && typeof file.name === "string" && file.name !== "main.tex" && typeof file.content === "string") {
-            const filePath = path.join(dir, path.basename(file.name));
+            const filePath = path.resolve(dir, file.name.replace(/\\/g, "/").replace(/^\/+/, ""));
+            if (!filePath.startsWith(dir + path.sep)) continue;
+            await fsp.mkdir(path.dirname(filePath), { recursive: true }).catch(() => {});
             await fsp.writeFile(filePath, file.content, "utf8").catch(() => {});
           }
         }
       }
 
+      const preferred = detectPreferredCompiler(tex);
+      const unicodeOnly = preferred !== "pdflatex" && engine === "pdflatex";
       let output = "";
-      let compileSucceeded = true;
-      for (let pass = 0; ; pass++) {
+      let timedOut = false;
+      for (let pass = 0; pass < 3 && !unicodeOnly; pass++) {
         const args = engine === "tectonic"
-          ? ["main.tex"]
-          : ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "main.tex"];
+          ? ["--keep-logs", "main.tex"]
+          : ["-interaction=nonstopmode", "-file-line-error", "main.tex"];
         const run = await runProcess(engine, args, dir, COMPILE_TIMEOUT_MS);
         output += run.output;
-        if (run.timedOut || run.code !== 0) {
-          compileSucceeded = false;
-          break;
-        }
+        if (run.timedOut) { timedOut = true; break; }
         const needsRerun =
-          pass === 0 &&
           engine !== "tectonic" &&
-          /rerun|labels? may have changed|no file main\.(toc|lof|lot)/i.test(run.output);
+          /rerun|labels? may have changed|no file main\.(toc|lof|lot|aux)/i.test(run.output);
         if (!needsRerun) break;
       }
 
       const pdfPath = path.join(dir, "main.pdf");
-      const pdf = compileSucceeded ? await fsp.readFile(pdfPath).catch(() => null) : null;
+      const pdf = timedOut || unicodeOnly ? null : await fsp.readFile(pdfPath).catch(() => null);
       if (pdf && pdf.length > 0) {
         return { statusCode: 200, pdf, engine, via: "server" };
       }
