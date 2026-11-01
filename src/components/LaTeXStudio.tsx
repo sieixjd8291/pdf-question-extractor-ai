@@ -272,7 +272,8 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     () => (scopedProject ? [scopedProject] : tree),
     [scopedProject, tree]
   );
-  const location = ws.activeFileId ? findFileLocation(tree, ws.activeFileId) : null;
+  const rawLocation = ws.activeFileId ? findFileLocation(tree, ws.activeFileId) : null;
+  const location = rawLocation && (!scopedProject || rawLocation.project.id === scopedProject.id) ? rawLocation : null;
   const activeFile = location?.file ?? null;
   const activeProject = location?.project ?? null;
   const activeContent = activeFile?.content ?? '';
@@ -742,12 +743,14 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
   useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current); }, []);
 
   // ---- Workspace invariants ------------------------------------------------
-  // Drop a stale activeFileId (e.g. after deleting the open file).
+  // Drop a stale or out-of-scope activeFileId (e.g. after deleting the open file)
+  // so the studio shows an explicit empty state instead of silently opening another file.
   useEffect(() => {
-    if (ws.activeFileId && findFileLocation(tree, ws.activeFileId)) return;
-    const next = firstFileId(tree);
-    if (next !== ws.activeFileId) setWs((prev) => ({ ...prev, activeFileId: next }));
-  }, [tree, ws.activeFileId]);
+    if (!ws.activeFileId) return;
+    const loc = findFileLocation(tree, ws.activeFileId);
+    if (loc && (!scopedProject || loc.project.id === scopedProject.id)) return;
+    setWs((prev) => ({ ...prev, activeFileId: null }));
+  }, [tree, ws.activeFileId, scopedProject]);
 
   // Drop selections that no longer exist.
   useEffect(() => {
@@ -2100,6 +2103,9 @@ onComplete={completeAssistantRepair}
             </div>
           </div>
           <div className="latex-preview-body">
+            {!activeFile ? (
+              <div className="latex-preview-empty"><FileCode2 size={30} /><p>No files are selected.</p><small>Select a .tex file in the sidebar to see its preview.</small></div>
+            ) : <>
             {compileError && !online && !repairing && (
               <div className="latex-error">
                 <div className="latex-error-head">
@@ -2143,6 +2149,7 @@ onComplete={completeAssistantRepair}
                 pdfUrl={pdfUrl}
               />
             )}
+            </>}
           </div>
         </section>
       </div>
