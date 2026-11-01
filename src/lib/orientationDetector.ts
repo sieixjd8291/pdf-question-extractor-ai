@@ -1,5 +1,5 @@
 import { isSaneQuad, warpQuadToCanvas, type ScanQuad } from './scannerFilters';
-import { detectOrientationWithModel, isReliableOrientation } from './mlOrientation';
+import { detectOrientationWithModel, isReliableOrientation, orientationCandidate } from './mlOrientation';
 
 export interface DocumentOrientationResult {
   /** The suggested absolute rotation angle (0, 90, 180, 270) */
@@ -17,6 +17,8 @@ export interface DocumentOrientationResult {
   needsFlipHorizontal?: boolean;
   /** Confidence score between 0.0 and 1.0 */
   confidence: number;
+  /** Model's plausible-but-undecided correction, confirmed by the CV engine before use. */
+  candidateDelta?: 0 | 90 | 180 | 270;
   /** Primary text reading line orientation */
   textDirection: 'horizontal' | 'vertical' | 'ambiguous';
   /** Whether the document requires rotation to be upright */
@@ -1260,6 +1262,7 @@ async function detectOrientationViaModel(
     if (!view) return null;
     const prediction = await detectOrientationWithModel(view);
     const reliable = isReliableOrientation(prediction);
+    const candidateDelta = reliable ? 0 : orientationCandidate(prediction);
     const res = { ...prediction, rotationDelta: reliable ? prediction.rotationDelta : 0 as RightAngle };
     if (view !== source) {
       (view as HTMLCanvasElement).width = 0;
@@ -1285,6 +1288,7 @@ async function detectOrientationViaModel(
       needsRotation: res.rotationDelta !== 0,
       aspectRatio: Math.round((isRot ? origH / origW : origW / origH) * 100) / 100,
       source: 'ml',
+      candidateDelta,
       reason: !reliable
         ? 'Orientation uncertain — kept the current orientation. Use manual rotation if needed.'
         : res.rotationDelta !== 0
@@ -1325,10 +1329,22 @@ export async function detectDocumentOrientation(
   } else {
     viaModel = await detectOrientationViaModel(source, currentRotation);
   }
-  if (viaModel && viaModel.rotationDelta !== 180) return viaModel;
+  const candidate = viaModel?.candidateDelta ?? 0;
+  if (viaModel && viaModel.rotationDelta !== 180 && (viaModel.needsRotation || !candidate)) return viaModel;
 
   const local = detectDocumentOrientationLocal(source, currentRotation);
-  if (viaModel && local.rotationDelta === 180 && local.confidence >= 0.7) return viaModel;
+  // A decisive model half-turn stands unless the layout engine confidently says otherwise.
+  if (viaModel?.needsRotation && (local.rotationDelta === 180 || local.confidence < 0.75)) return viaModel;
+  if (viaModel && candidate && local.rotationDelta === candidate && local.confidence >= 0.55) {
+    return {
+      ...viaModel,
+      rotationDelta: candidate,
+      suggestedRotation: normalizeAngle(currentRotation + candidate),
+      needsRotation: true,
+      textDirection: candidate === 180 ? 'horizontal' : 'vertical',
+      reason: `Model and layout analysis agree: rotated ${candidate}° to upright`,
+    };
+  }
 
   // Layout heuristics cannot reliably distinguish upright handwriting, tables or diagrams.
   // Never let a fallback guess silently change the decoded (EXIF-corrected) orientation.

@@ -115,11 +115,26 @@ export function isReliableOrientation(result: MlOrientationResult): boolean {
   const runnerUp = Math.max(...Object.entries(result.scores)
     .filter(([angle]) => Number(angle) !== result.rotationDelta)
     .map(([, score]) => score));
-  // An unnecessary half-turn destroys an already readable page; require stronger evidence.
-  const unanimousQuarterTurn = (result.rotationDelta === 90 || result.rotationDelta === 270) &&
-    Number.isFinite(result.minViewConfidence) && result.minViewConfidence! >= 0.9 && result.minViewConfidence! <= 1;
-  const minimum = result.rotationDelta === 180 ? 0.99 : unanimousQuarterTurn ? 0.9 : 0.95;
-  return result.confidence >= minimum && winner >= minimum && winner - runnerUp >= 0.8;
+  if (result.rotationDelta === 0) return winner >= runnerUp;
+  if (result.minViewConfidence !== undefined &&
+      (!Number.isFinite(result.minViewConfidence) || result.minViewConfidence < 0 || result.minViewConfidence > 1)) return false;
+  const minView = result.minViewConfidence ?? 1;
+  // Sideways pages are the common case and the model separates them well.
+  // An unnecessary half-turn is more harmful, so it needs clearer evidence.
+  if (result.rotationDelta === 180) {
+    return result.confidence >= 0.8 && winner - runnerUp >= 0.55 && minView >= 0.35;
+  }
+  return result.confidence >= 0.62 && winner - runnerUp >= 0.3 && minView >= 0.3;
+}
+
+/** A plausible but not decisive model answer that a second engine may confirm. */
+export function orientationCandidate(result: MlOrientationResult): 0 | 90 | 180 | 270 {
+  const winner = result.scores[result.rotationDelta];
+  if (!Number.isFinite(winner) || result.rotationDelta === 0) return 0;
+  const runnerUp = Math.max(...Object.entries(result.scores)
+    .filter(([angle]) => Number(angle) !== result.rotationDelta)
+    .map(([, score]) => score));
+  return winner >= 0.4 && winner - runnerUp >= 0.1 ? result.rotationDelta : 0;
 }
 
 /**
