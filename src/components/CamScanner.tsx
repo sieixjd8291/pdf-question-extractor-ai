@@ -38,6 +38,9 @@ import {
   Minimize2,
 } from 'lucide-react';
 import { CompressDialog, effectiveScale, resizeSmooth, type CompressionSettings } from './CompressDialog';
+import { createPortal } from 'react-dom';
+import { usePointerSort } from './scanner/usePointerSort';
+import { useProcessedThumbs, pageRenderSig, renderPageToDataUrl } from './scanner/useProcessedThumbs';
 import { useToast } from './Toast';
 import { useDialog } from '../hooks/useDialog';
 import { jsPDF } from 'jspdf';
@@ -271,8 +274,22 @@ function fitCanvasDisplay(canvas: HTMLCanvasElement): void {
   canvas.style.height = `${Math.max(1, Math.round(canvas.height * scale))}px`;
 }
 
+/**
+ * Keeps the user's name verbatim (spaces, + - , ' " ( ) & etc.). Only the
+ * characters an OS forbids in file names are swapped for visually identical
+ * full-width forms, because browsers would otherwise rewrite them to "_".
+ */
+const RESERVED_FILENAME_CHARS: Record<string, string> = {
+  '/': '／', '\\': '＼', ':': '：', '*': '＊', '?': '？', '<': '＜', '>': '＞', '|': '｜', '"': '＂',
+};
 function safeFileName(raw: string): string {
-  const clean = raw.trim().replace(/[^\w\-. ]+/g, '_').replace(/\s+/g, '_');
+  const clean = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[/\\:*?<>|"]/g, (c) => RESERVED_FILENAME_CHARS[c])
+    .replace(/\.pdf$/i, '')
+    .trim()
+    .replace(/^\.+|\.+$/g, '');
   return clean || 'scan';
 }
 
@@ -419,8 +436,9 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
   /** Mobile bottom sheet: whether the filters & adjust panel is open. */
   const [sheetOpen, setSheetOpen] = useState(false);
   const [arranging, setArranging] = useState(false);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const internalDragRef = useRef(false);
+  const [arrangeSelectedId, setArrangeSelectedId] = useState<string | null>(null);
+  const [arrangePreview, setArrangePreview] = useState<{ id: string; sig: string; url: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [editorDragOver, setEditorDragOver] = useState(false);
   const [previewPending, setPreviewPending] = useState(false);
@@ -925,6 +943,47 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
       return next;
     });
   };
+
+  const stripSort = usePointerSort((from, to) => movePageTo(from, to));
+  const arrangeSort = usePointerSort((from, to) => {
+    movePageTo(from, to);
+    lastRearrangedIdRef.current = pages[from]?.id ?? null;
+  });
+  const processedThumbs = useProcessedThumbs(pages);
+  const arrangePage = arranging
+    ? pages.find((p) => p.id === arrangeSelectedId) ?? pages[0]
+    : undefined;
+  const arrangeSig = arrangePage ? pageRenderSig(arrangePage) : '';
+  useEffect(() => {
+    if (!arrangePage) return;
+    let cancelled = false;
+    renderPageToDataUrl(arrangePage, 1400)
+      .then((url) => { if (!cancelled) setArrangePreview({ id: arrangePage.id, sig: arrangeSig, url }); })
+      .catch(() => { /* keep the thumbnail fallback */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrangePage?.id, arrangeSig]);
+
+  const activeGhost = stripSort.ghost ?? arrangeSort.ghost;
+  const sortGhost =
+    activeGhost && typeof document !== 'undefined'
+      ? createPortal(
+          <img
+            className="scanner-sort-ghost"
+            src={activeGhost.src}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            style={{
+              left: activeGhost.x,
+              top: activeGhost.y,
+              width: activeGhost.width,
+              height: activeGhost.height,
+            }}
+          />,
+          document.body
+        )
+      : null;
 
   const movePage = (id: string, dir: -1 | 1) => {
     setPages((prev) => {
@@ -1820,6 +1879,10 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     if (!cropMode) return;
     const handle = hitTestCrop(e);
     if (!handle || cropDragRef.current) return;
+    // Stops text-selection / native image drag from hijacking the gesture
+    // (that is what showed the "not-allowed" cursor and stuttered on touch).
+    e.preventDefault();
+    e.stopPropagation();
     cropManualRef.current = true;
     cropEditRef.current++;
     cropDragRectRef.current = cropLayerRef.current!.getBoundingClientRect();
@@ -2562,7 +2625,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
           <div>
             <h2 className="scanner-arrange-title">Rearrange pages</h2>
             <span className="text-secondary text-[12.5px]">
-              Drag pages into the order you want — or use the arrows on each page.
+              Hold and drag pages into the order you want — or use the arrows on each page.
               {' '}{pages.length} page{pages.length === 1 ? '' : 's'}.
             </span>
           </div>
@@ -2591,50 +2654,44 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
             </button>
           </div>
         </div>
-        <div className="scanner-arrange-grid">
-          {pages.map((page, idx) => (
+        {sortGhost}
+        <div className="scanner-arrange-body">
+        <div className="scanner-arrange-grid" role="listbox" aria-label="Pages to rearrange">
+          {pages.map((page, idx) => {
+            const processed = processedThumbs[page.id];
+            const thumbSrc = processed || page.thumbUrl || page.originalUrl;
+            const selected = page.id === arrangePage?.id;
+            return (
             <div
               key={page.id}
+              role="option"
+              aria-selected={selected}
+              tabIndex={0}
               className={
                 'scanner-arrange-tile' +
-                (dragIndex === idx ? ' dragging' : '') +
-                (overIndex === idx && dragIndex !== null && dragIndex !== idx ? ' over' : '')
+                (selected ? ' selected' : '') +
+                (arrangeSort.dragIndex === idx ? ' dragging' : '') +
+                (arrangeSort.overIndex === idx && arrangeSort.dragIndex !== null && arrangeSort.dragIndex !== idx ? ' over' : '')
               }
-              draggable
-              onDragStart={(e) => {
-                setDragIndex(idx);
-                lastRearrangedIdRef.current = page.id;
-                e.dataTransfer.setData('text/plain', String(idx));
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setOverIndex((prev) => (prev === idx ? prev : idx));
-              }}
-              onDragLeave={() => setOverIndex((prev) => (prev === idx ? null : prev))}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragIndex !== null) movePageTo(dragIndex, idx);
-                setDragIndex(null);
-                setOverIndex(null);
-              }}
-              onDragEnd={() => {
-                setDragIndex(null);
-                setOverIndex(null);
+              {...arrangeSort.bind(idx, thumbSrc)}
+              onClick={() => setArrangeSelectedId(page.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setArrangeSelectedId(page.id); }
               }}
             >
               <span className="scanner-thumb-num">{idx + 1}</span>
-              <img
-                src={page.thumbUrl || page.originalUrl}
-                alt={`Page ${idx + 1}`}
-                draggable={false}
-                loading="lazy"
-                decoding="async"
-                style={{ transform: `rotate(${page.rotation}deg)` }}
-              />
-              <span className="scanner-thumb-filter">
-                {SCAN_FILTERS.find((f2) => f2.id === page.filter)?.label}
+              <span className="scanner-arrange-img">
+                <img
+                  src={thumbSrc}
+                  alt={`Page ${idx + 1} preview`}
+                  draggable={false}
+                  loading="lazy"
+                  decoding="async"
+                  style={processed ? undefined : { transform: `rotate(${page.rotation}deg)` }}
+                />
+              </span>
+              <span className="scanner-arrange-label">
+                Page {idx + 1} · {SCAN_FILTERS.find((f2) => f2.id === page.filter)?.label}
               </span>
               <span className="scanner-arrange-actions">
                 <button
@@ -2664,7 +2721,38 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
               </span>
               <GripVertical size={15} className="scanner-arrange-grip" aria-hidden="true" />
             </div>
-          ))}
+            );
+          })}
+        </div>
+        {arrangePage && (
+          <aside className="scanner-arrange-preview" aria-label="Selected page preview">
+            <div className="scanner-arrange-preview-head">
+              <strong>Page {pages.findIndex((p) => p.id === arrangePage.id) + 1} of {pages.length}</strong>
+              <span className="text-secondary text-[12px]">
+                {SCAN_FILTERS.find((f2) => f2.id === arrangePage.filter)?.label}
+              </span>
+            </div>
+            <div className="scanner-arrange-preview-frame">
+              {(() => {
+                const fresh = arrangePreview && arrangePreview.id === arrangePage.id ? arrangePreview.url : null;
+                const fallback = processedThumbs[arrangePage.id];
+                const src = fresh || fallback || arrangePage.thumbUrl || arrangePage.originalUrl;
+                const rotateRaw = !fresh && !fallback;
+                return (
+                  <img
+                    src={src}
+                    alt={`Full preview of page ${pages.findIndex((p) => p.id === arrangePage.id) + 1}`}
+                    draggable={false}
+                    style={rotateRaw ? { transform: `rotate(${arrangePage.rotation}deg)` } : undefined}
+                  />
+                );
+              })()}
+            </div>
+            <p className="scanner-side-note">
+              Tap a page to preview it here. Press and hold (or click and drag) a page to move it.
+            </p>
+          </aside>
+        )}
         </div>
       </div>
     );
@@ -2678,15 +2766,17 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         (cropMode ? ' crop-active' : eraseMode ? ' erase-active' : '') +
         (editorDragOver ? ' editor-drag-over' : '')
       }
+      onDragStartCapture={() => { internalDragRef.current = true; }}
+      onDragEndCapture={() => { internalDragRef.current = false; }}
       onDragOver={(e) => {
-        if (e.dataTransfer?.types?.includes('Files')) {
+        if (!internalDragRef.current && e.dataTransfer?.types?.includes('Files')) {
           e.preventDefault();
           e.stopPropagation();
           setEditorDragOver(true);
         }
       }}
       onDragEnter={(e) => {
-        if (e.dataTransfer?.types?.includes('Files')) {
+        if (!internalDragRef.current && e.dataTransfer?.types?.includes('Files')) {
           e.preventDefault();
           e.stopPropagation();
           setEditorDragOver(true);
@@ -2700,6 +2790,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         e.preventDefault();
         e.stopPropagation();
         setEditorDragOver(false);
+        if (internalDragRef.current) { internalDragRef.current = false; return; }
         if (e.dataTransfer?.files?.length) {
           void handleFiles(e.dataTransfer.files);
         }
@@ -2786,7 +2877,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
             </button>
             <button
               className="btn secondary btn-sm"
-              onClick={() => { setCropMode(false); setArranging(true); }}
+              onClick={() => { setCropMode(false); setArrangeSelectedId(activePage?.id ?? null); setArranging(true); }}
               disabled={pages.length < 2}
               title={pages.length < 2 ? 'Add at least two pages to rearrange' : 'Reorder pages'}
             >
@@ -2868,6 +2959,9 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                   onPointerMove={onCropPointerMove}
                   onPointerUp={onCropPointerUp}
                   onPointerCancel={onCropPointerUp}
+                  onLostPointerCapture={onCropPointerUp}
+                  onDragStart={(e) => e.preventDefault()}
+                  onContextMenu={(e) => e.preventDefault()}
                 >
                   <svg className="scanner-crop-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
                     <path
@@ -3353,14 +3447,24 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
 
       {/* Page strip */}
       {!eraseMode && !cropMode && (
-        <div className="scanner-strip" role="listbox" aria-label="Scanned pages">
-          {pages.map((page, idx) => (
+        <div className="scanner-strip" role="listbox" aria-label="Scanned pages" data-sort-scroll="">
+          {sortGhost}
+          {pages.map((page, idx) => {
+            const processed = processedThumbs[page.id];
+            const thumbSrc = processed || page.thumbUrl || page.originalUrl;
+            return (
             <div
               key={page.id}
               role="option"
               aria-selected={page.id === activePage?.id}
               tabIndex={0}
-              className={'scanner-thumb' + (page.id === activePage?.id ? ' on' : '')}
+              className={
+                'scanner-thumb' +
+                (page.id === activePage?.id ? ' on' : '') +
+                (stripSort.dragIndex === idx ? ' dragging' : '') +
+                (stripSort.overIndex === idx && stripSort.dragIndex !== null && stripSort.dragIndex !== idx ? ' over' : '')
+              }
+              {...stripSort.bind(idx, thumbSrc)}
               onClick={() => {
                   if (cropMode) { selectCropPage(page); return; }
                 setActiveId(page.id);
@@ -3379,11 +3483,12 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
             >
               <span className="scanner-thumb-num">{idx + 1}</span>
               <img
-                src={page.thumbUrl || page.originalUrl}
+                src={thumbSrc}
                 alt={`Page ${idx + 1}`}
+                draggable={false}
                 loading="lazy"
                 decoding="async"
-                style={{ transform: `rotate(${page.rotation}deg)` }}
+                style={processed ? undefined : { transform: `rotate(${page.rotation}deg)` }}
               />
               <span className="scanner-thumb-filter">{SCAN_FILTERS.find((f) => f.id === page.filter)?.label}</span>
               <span className="scanner-thumb-actions">
@@ -3413,7 +3518,8 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
                 </button>
               </span>
             </div>
-          ))}
+            );
+          })}
           <button
             className="scanner-thumb scanner-thumb-add"
             onClick={() => fileInputRef.current?.click()}

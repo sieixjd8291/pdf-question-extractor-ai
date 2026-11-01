@@ -1047,9 +1047,9 @@ function applyMagicFilter(d: Uint8ClampedArray, w: number, h: number, userSharpe
       const gMean = gSum / nPaper;
       const bMean = bSum / nPaper;
       const yPaper = 0.299 * rMean + 0.587 * gMean + 0.114 * bMean;
-      const gainR = Math.min(1.1, Math.max(0.9, yPaper / Math.max(1, rMean)));
-      const gainG = Math.min(1.1, Math.max(0.9, yPaper / Math.max(1, gMean)));
-      const gainB = Math.min(1.1, Math.max(0.9, yPaper / Math.max(1, bMean)));
+      const gainR = Math.min(1.3, Math.max(0.78, yPaper / Math.max(1, rMean)));
+      const gainG = Math.min(1.3, Math.max(0.78, yPaper / Math.max(1, gMean)));
+      const gainB = Math.min(1.3, Math.max(0.78, yPaper / Math.max(1, bMean)));
       const needsBalance =
         Math.abs(gainR - 1) > 0.004 ||
         Math.abs(gainG - 1) > 0.004 ||
@@ -1087,6 +1087,21 @@ function applyMagicFilter(d: Uint8ClampedArray, w: number, h: number, userSharpe
   const Ys = new Float32Array(Y);
   unsharpPlane(Ys, w, h, 0.7 + userSharpen * 0.5, 1.0, 2.5);
 
+  // Per-channel illumination maps: a global white balance cannot remove a
+  // LOCAL cast (bluish shadow under the hand/binding, blue ambient light on
+  // one side). Dividing each channel by its own paper level makes the paper
+  // neutral everywhere, so the chroma boost never amplifies a blue tint.
+  const sigmaC = Math.max(35, Math.min(90, Math.min(w, h) / 8));
+  const planeOf = (c: number) => {
+    const p = new Float32Array(n);
+    for (let i = 0; i < n; i++) p[i] = d[i * 4 + c];
+    return p;
+  };
+  const bgR = illuminationMap(planeOf(0), w, h, sigmaC);
+  const bgG = illuminationMap(planeOf(1), w, h, sigmaC);
+  const bgB = illuminationMap(planeOf(2), w, h, sigmaC);
+  const castGain = (mY: number, mC: number) => Math.min(1.6, Math.max(0.6, mY / Math.max(8, mC)));
+
   const inv = bg.inv;
   const clampByte = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
 
@@ -1095,11 +1110,13 @@ function applyMagicFilter(d: Uint8ClampedArray, w: number, h: number, userSharpe
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const i4 = i * 4;
-      const rIn = d[i4];
-      const gIn = d[i4 + 1];
-      const bIn = d[i4 + 2];
-      const yVal = Y[i];
-      const m = Math.max(24, sampleIllumination(bg, (x + 0.5) * inv - 0.5, fy));
+      const fx = (x + 0.5) * inv - 0.5;
+      const mRaw = sampleIllumination(bg, fx, fy);
+      const rIn = d[i4] * castGain(mRaw, sampleIllumination(bgR, fx, fy));
+      const gIn = d[i4 + 1] * castGain(mRaw, sampleIllumination(bgG, fx, fy));
+      const bIn = d[i4 + 2] * castGain(mRaw, sampleIllumination(bgB, fx, fy));
+      const yVal = 0.299 * rIn + 0.587 * gIn + 0.114 * bIn;
+      const m = Math.max(24, mRaw);
       const rho = Ys[i] / m;
 
       // Tone curves for paper (clean to white) and content (stroke

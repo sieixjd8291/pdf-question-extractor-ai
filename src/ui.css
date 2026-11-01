@@ -3274,6 +3274,14 @@ button.chip[aria-pressed="true"]:hover { border-color: transparent; }
 
 /* Crop overlay — perspective quad editor */
 .scanner-crop-layer { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+/* Beats `.scanner-page button { touch-action: manipulation }` so handle drags
+   never turn into page pans, text selection or native image drags. */
+.scanner-page .scanner-crop-layer,
+.scanner-page .scanner-crop-layer *,
+.scanner-page.crop-active .scanner-canvas {
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; -webkit-user-drag: none;
+}
 .scanner-crop-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .scanner-crop-mask { fill: rgba(0, 0, 0, 0.55); }
 .scanner-crop-handle {
@@ -3593,16 +3601,45 @@ button.scanner-crop-handle:focus-visible { outline: 3px solid #fff; outline-offs
 /* Rearrange mode */
 .scanner-arrange-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .scanner-arrange-title { margin: 0 0 2px; font-size: 16.5px; }
-.scanner-arrange-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.scanner-arrange-body { display: flex; align-items: flex-start; gap: 16px; margin-top: 12px; }
+.scanner-arrange-grid { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 .scanner-arrange-tile {
   position: relative; border: 2px solid var(--line); border-radius: var(--r-md);
-  background: var(--surface); padding: 8px; display: grid; place-items: center;
-  min-height: 170px; cursor: grab; transition: border-color var(--t), box-shadow var(--t), opacity var(--t);
+  background: var(--surface); padding: 8px 8px 6px; display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  cursor: grab; transition: border-color var(--t), box-shadow var(--t), opacity var(--t);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .scanner-arrange-tile:active { cursor: grabbing; }
-.scanner-arrange-tile img { max-width: 100%; max-height: 160px; object-fit: contain; pointer-events: none; border-radius: 4px; }
+.scanner-arrange-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scanner-arrange-img {
+  display: grid; place-items: center; aspect-ratio: 3 / 4; width: 100%;
+  background: var(--canvas); border-radius: 6px; overflow: hidden;
+}
+.scanner-arrange-tile img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.scanner-arrange-label { font-size: 11.5px; font-weight: 600; color: var(--secondary); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 16px; }
+.scanner-arrange-tile.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.scanner-arrange-tile.selected .scanner-arrange-label { color: var(--accent); }
 .scanner-arrange-tile.dragging { opacity: 0.35; border-style: dashed; }
-.scanner-arrange-tile.over { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.scanner-arrange-tile.over { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); transform: scale(1.02); }
+.scanner-arrange-preview {
+  flex: 0 0 min(42%, 460px); position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); padding: 10px;
+}
+.scanner-arrange-preview-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; }
+.scanner-arrange-preview-frame {
+  display: grid; place-items: center; background: var(--canvas); border-radius: 6px; overflow: hidden;
+  max-height: calc(100vh - 220px); min-height: 220px;
+}
+.scanner-arrange-preview-frame img { max-width: 100%; max-height: calc(100vh - 220px); object-fit: contain; display: block; }
+.scanner-sort-ghost {
+  position: fixed; z-index: 9999; pointer-events: none; object-fit: contain; background: var(--surface);
+  border-radius: 8px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); transform: translate(-50%, -50%) rotate(-3deg) scale(1.04);
+  opacity: 0.92;
+}
+.scanner-thumb { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.scanner-thumb img { -webkit-user-drag: none; pointer-events: none; }
+.scanner-thumb.dragging { opacity: 0.35; border-style: dashed; }
+.scanner-thumb.over { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .scanner-arrange-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
 .scanner-arrange-actions button {
   width: 24px; height: 24px; border-radius: 7px; border: none; background: rgba(0, 0, 0, 0.55);
@@ -3619,6 +3656,9 @@ button.scanner-crop-handle:focus-visible { outline: 3px solid #fff; outline-offs
      the display box (and reserves room for the mobile bar + strip). A CSS cap
      fights the inline height and squishes the preview out of aspect. */
   .scanner-name-input { width: 150px; }
+  .scanner-arrange-body { flex-direction: column-reverse; }
+  .scanner-arrange-preview { position: static; flex: none; width: 100%; }
+  .scanner-arrange-preview-frame, .scanner-arrange-preview-frame img { max-height: 55vh; }
 }
 
 /* --------------------------------------------------------------------------
