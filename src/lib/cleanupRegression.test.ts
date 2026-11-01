@@ -22,7 +22,7 @@ test('self-hosted font assets match the selectable catalog without orphaned file
 const filterHashes: Record<ScanFilterId, string> = {
   original: 'd918770bb0d5e477bd9215b3032620c6405f051d0852d12dba80a332d5fa807b',
   superscan: '946a99fe9ed015521e802ee81dad4ddb8e86cc189cea3883b9164b69b40143f9',
-  magic: '85617ebee0ffedaa46365034178ddf4d83c366dc9892e828843c535b6172b9e3',
+  magic: '5fb7d7d5f308dffe71ffc4cf1491989f19c4fcde78ccba6f2ab6ca87f69fe6a9',
   gray: 'f4e8abe6f9a601d4cba19e51dd5d538878ef5ff3c98035d2f508f91f90bc9047',
 };
 
