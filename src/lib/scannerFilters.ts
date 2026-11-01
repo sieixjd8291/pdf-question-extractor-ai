@@ -88,6 +88,13 @@ export function clearImageCache(): void {
   imageCache.clear();
 }
 
+const inflightImages = new Map<string, Promise<HTMLImageElement>>();
+
+/** Drops one decoded image from the cache (e.g. a temporary upload blob URL). */
+export function evictImageFromCache(url: string): void {
+  imageCache.delete(url);
+}
+
 export function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
   const cached = imageCache.get(url);
   if (cached) {
@@ -97,27 +104,31 @@ export function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
     imageCache.set(url, cached);
     return Promise.resolve(cached);
   }
-  return new Promise((resolve, reject) => {
+  const pending = inflightImages.get(url);
+  if (pending) return pending;
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      if (imageCache.size >= MAX_IMAGE_CACHE) {
+      inflightImages.delete(url);
+      // Evicted images are only dropped from the map, never blanked: another
+      // caller (detection, orientation, preview) may still be drawing from
+      // it. Clearing `src` here broke auto-crop/orientation on big batches.
+      while (imageCache.size >= MAX_IMAGE_CACHE) {
         const oldestKey = imageCache.keys().next().value;
-        if (oldestKey !== undefined) {
-          const oldImg = imageCache.get(oldestKey);
-          if (oldImg) {
-            oldImg.onload = null;
-            oldImg.onerror = null;
-            oldImg.src = '';
-          }
-          imageCache.delete(oldestKey);
-        }
+        if (oldestKey === undefined) break;
+        imageCache.delete(oldestKey);
       }
       imageCache.set(url, img);
       resolve(img);
     };
-    img.onerror = () => reject(new Error('Image could not be decoded'));
+    img.onerror = () => {
+      inflightImages.delete(url);
+      reject(new Error('Image could not be decoded'));
+    };
     img.src = url;
   });
+  inflightImages.set(url, promise);
+  return promise;
 }
 
 /**

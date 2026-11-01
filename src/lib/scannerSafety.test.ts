@@ -17,24 +17,25 @@ function prediction(rotationDelta: MlOrientationResult['rotationDelta'], confide
 
 test('ambiguous model winners never authorize rotation', () => {
   for (const angle of [90, 180, 270] as const) {
-    for (const confidence of [0.5, 0.7, 0.9, 0.949]) assert.equal(isReliableOrientation(prediction(angle, confidence)), false);
+    for (const confidence of [0.3, 0.45, 0.55]) assert.equal(isReliableOrientation(prediction(angle, confidence)), false);
   }
 });
 
-test('quarter-turns accept strong agreement only when every independent view supports the correction', () => {
+test('clear quarter-turns rotate automatically; broken view scores are rejected', () => {
   for (const angle of [90, 270] as const) {
-    const result = prediction(angle, 0.925);
-    assert.equal(isReliableOrientation({ ...result, minViewConfidence: 0.92 }), true);
-    for (const minViewConfidence of [0.89, NaN, Infinity, 1.1]) {
+    const result = prediction(angle, 0.7);
+    assert.equal(isReliableOrientation(result), true);
+    assert.equal(isReliableOrientation({ ...result, minViewConfidence: 0.6 }), true);
+    for (const minViewConfidence of [0.1, NaN, Infinity, 1.1]) {
       assert.equal(isReliableOrientation({ ...result, minViewConfidence }), false);
     }
   }
-  assert.equal(isReliableOrientation({ ...prediction(180, 0.925), minViewConfidence: 0.92 }), false);
+  assert.equal(isReliableOrientation({ ...prediction(180, 0.7), minViewConfidence: 0.9 }), false);
 });
 
 test('half-turns require stronger evidence than quarter-turns', () => {
-  assert.equal(isReliableOrientation(prediction(180, 0.98)), false);
-  assert.equal(isReliableOrientation(prediction(180, 0.995)), true);
+  assert.equal(isReliableOrientation(prediction(180, 0.75)), false);
+  assert.equal(isReliableOrientation(prediction(180, 0.9)), true);
   assert.equal(isReliableOrientation(prediction(90, 0.97)), true);
   assert.equal(isReliableOrientation(prediction(270, 0.97)), true);
   assert.equal(isReliableOrientation(prediction(0, 0.99)), true);

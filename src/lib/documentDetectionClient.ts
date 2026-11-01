@@ -43,8 +43,13 @@ async function run(url:string,rotation:Rotation,version:number){
     if(typeof Worker==='undefined')throw new Error('Workers unavailable');
     const w=getWorker(),id=++jobId;
     let bitmap:ImageBitmap|undefined,pixels:DetectionPixels|undefined;
-    if(typeof OffscreenCanvas!=='undefined'&&typeof createImageBitmap==='function')bitmap=await createImageBitmap(image);
-    else pixels=preparePixels(image,rotation,1800);
+    if(typeof OffscreenCanvas!=='undefined'&&typeof createImageBitmap==='function'){
+      // Ship a bounded bitmap: transferring full 12–50 MP camera frames for every page exhausted memory on large batches.
+      const nw=image.naturalWidth||1,nh=image.naturalHeight||1,s=Math.min(1,1800/Math.max(nw,nh));
+      try{bitmap=s<1?await createImageBitmap(image,{resizeWidth:Math.max(16,Math.round(nw*s)),resizeHeight:Math.max(16,Math.round(nh*s)),resizeQuality:'high'}):await createImageBitmap(image);}
+      catch{bitmap=undefined;}
+    }
+    if(!bitmap)pixels=preparePixels(image,rotation,1800);
     if(version!==epoch){bitmap?.close();throw new Error('Stale detection');}
     const result = await new Promise<DocumentDetectionResult>((resolve,reject)=>{
       const timer=setTimeout(()=>stopWorker(),30000);pending.set(id,{resolve,reject,timer});

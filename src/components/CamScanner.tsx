@@ -62,6 +62,7 @@ import {
   THUMB_MAX_EDGE,
   renderFilterThumbnailsFast,
   clearImageCache,
+  evictImageFromCache,
 } from '../lib/scannerFilters';
 import { applyEraseStrokes } from '../lib/backgroundEraser';
 import {
@@ -776,21 +777,25 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         const processImage = async (file: File) => {
             const url = URL.createObjectURL(file);
             try {
+              // One shared decode for detection + orientation (two full-size
+              // decodes per photo is what ran big batches out of memory).
               const [img, fileBytes] = await Promise.all([
-                decodeImage(url),
+                loadImageFromUrl(url),
                 file.arrayBuffer().catch(() => undefined),
               ]);
 
-  let quad: ScanQuad | null = null;
-  // Orientation only trusts a high-confidence outline; a loose crop outline can mislead the text-direction check.
-  let orientationQuad: ScanQuad | null = null;
-  try {
-  const detection = await detectDocumentCached(url, 0);
-  orientationQuad = automaticDocumentQuad(detection, 'photo');
-  if (autoCropRef.current) quad = automaticDocumentQuad(detection, 'photo', true);
-  } catch {
-  // A detection failure must not discard a readable photo.
-  }
+              let quad: ScanQuad | null = null;
+              let orientationQuad: ScanQuad | null = null;
+              try {
+                const detection = await detectDocumentCached(url, 0);
+                const lenientQuad = automaticDocumentQuad(detection, 'photo', true);
+                // The page outline (strict when verified, else the auto-crop outline)
+                // lets the orientation model read the page instead of the desk around it.
+                orientationQuad = automaticDocumentQuad(detection, 'photo') ?? lenientQuad;
+                if (autoCropRef.current) quad = lenientQuad;
+              } catch {
+                // A detection failure must not discard a readable photo.
+              }
   const fixRes = await autoFixImageOrientation(img, 0.92, fileBytes, importMaxEdge(), orientationQuad, autoOrientRef.current);
               const wasFixed = fixRes.wasRotated || fixRes.wasFlipped;
               if (quad && fixRes.appliedDelta !== 0) {
@@ -828,6 +833,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
               return { ok: false, wasFixed: false, item: null };
             } finally {
               releaseDocumentDetection(url);
+              evictImageFromCache(url);
               URL.revokeObjectURL(url);
             }
         };
@@ -2131,7 +2137,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     setBusy('Detecting orientation…');
     try {
       const img = await loadImageFromUrl(activePage.originalUrl);
-      const res = await detectDocumentOrientation(img, activePage.rotation, activePage.cropRevision > 0 ? activePage.quad : null);
+      const res = await detectDocumentOrientation(img, activePage.rotation, activePage.quad);
       const engineTag = `· ${res.source === 'ml' ? 'on-device model' : res.source === 'ai' ? 'server CV' : 'browser CV'} ${Math.round((res.confidence || 0) * 100)}%`;
       if (res.needsRotation && res.rotationDelta !== 0) {
         const delta = res.rotationDelta;
@@ -2162,7 +2168,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
         const p = pages[i];
         setBusy(`Analyzing page ${i + 1} of ${pages.length}…`);
         const img = await loadImageFromUrl(p.originalUrl);
-        const res = await detectDocumentOrientation(img, p.rotation, p.cropRevision > 0 ? p.quad : null);
+        const res = await detectDocumentOrientation(img, p.rotation, p.quad);
         if (res.needsRotation && res.rotationDelta !== 0) {
           rotatedCount++;
           const delta = res.rotationDelta;
@@ -2195,6 +2201,10 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
       toast.error('Auto-orientation failed on one or more pages.');
     } finally {
       setBusy(null);
+      if (cropAfterOrientRef.current) {
+        cropAfterOrientRef.current = false;
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('camscanner-auto-crop-all')), 50);
+      }
     }
   };
 
@@ -2204,6 +2214,7 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     try {
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i];
+        if (p.cropRevision > 0) continue; // never overwrite a crop the user set by hand
         setBusy(`Detecting page edges ${i + 1} of ${pages.length}…`);
         const result = await detectDocumentCached(p.originalUrl, p.rotation);
         const quad = automaticDocumentQuad(result, p.sourceKind, true);
@@ -2227,6 +2238,27 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
       setBusy(null);
     }
   };
+
+  // Turning an auto setting ON applies it to the pages already loaded, so the
+  // user never has to find a separate "apply" button.
+  const prevAutoRef = useRef({ autoCrop, autoOrient });
+  const cropAfterOrientRef = useRef(false);
+  useEffect(() => {
+    const prev = prevAutoRef.current;
+    prevAutoRef.current = { autoCrop, autoOrient };
+    if (pages.length === 0) return;
+    const orient = autoOrient && !prev.autoOrient;
+    const crop = autoCrop && !prev.autoCrop;
+    if (!orient && !crop) return;
+    // Deferred: the listener effect below is re-attached after this effect runs.
+    const timer = window.setTimeout(() => {
+      cropAfterOrientRef.current = orient && crop;
+      if (orient) window.dispatchEvent(new CustomEvent('camscanner-auto-orient-all'));
+      else if (crop) window.dispatchEvent(new CustomEvent('camscanner-auto-crop-all'));
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCrop, autoOrient]);
 
   useEffect(() => {
     const handleActive = () => { void autoOrientActivePage(); };
