@@ -136,11 +136,24 @@ async function compileOnWeb(
   throw new LaTeXCompileError('LaTeX compilation failed.', log, 'web');
 }
 
+// A valid document with an empty body makes TeX emit "No pages of output" and no PDF.
+// Compile it as a blank page instead of treating it as an error that needs repair.
+function ensureOutputPage(tex: string): string {
+  const begin = tex.match(/\\begin\s*\{document\}/);
+  const end = tex.match(/\\end\s*\{document\}/);
+  if (!begin || !end || begin.index === undefined || end.index === undefined || end.index < begin.index) return tex;
+  const bodyStart = begin.index + begin[0].length;
+  const body = tex.slice(bodyStart, end.index).replace(/(^|[^\\])%.*$/gm, '$1');
+  if (body.trim()) return tex;
+  return `${tex.slice(0, bodyStart)}\n\\null\n${tex.slice(bodyStart)}`;
+}
+
 export async function compileLaTeX(
-  tex: string,
+  rawTex: string,
   files?: ResourceFile[]
 ): Promise<LaTeXCompileResult> {
-  if (!tex.trim()) throw new LaTeXCompileError('Nothing to compile — the editor is empty.');
+  if (!rawTex.trim()) throw new LaTeXCompileError('Nothing to compile — the editor is empty.');
+  const tex = ensureOutputPage(rawTex);
 
   const started = performance.now();
 
