@@ -14,6 +14,11 @@ export const MODEL_TIMEOUT_MS = 45000;
 export const MODEL_FALLBACK_BUDGET_MS = 90000;
 export const MISSING_GEMINI_KEY_MESSAGE = 'Enter your Gemini API key in Settings to analyze and fix errors.';
 const MAX_REPAIRS = LATEX_MAX_AUTO_REPAIRS;
+// Each request must finish well inside the serverless maxDuration (300s); the client
+// session continues with a fresh request whenever a batch hands off early.
+export const REQUEST_BUDGET_MS = 270_000;
+const COMPILE_RESERVE_MS = 125_000;
+const MIN_AI_BUDGET_MS = 15_000;
 
 export async function automaticallyRepairLatex(
   body: unknown,
@@ -37,7 +42,11 @@ export async function automaticallyRepairLatex(
   });
   const timeoutMessage = 'Compilation timed out before producing a usable TeX error log. Your source is unchanged. Retry Compile; if it keeps timing out, compile smaller sections or simplify expensive TikZ/pgfplots figures.';
   const continuation = (log: string) => result(false, 'Continuing automatically with the updated source and fresh compiler diagnostics…', log, undefined, undefined, undefined, true);
+  const remaining = () => started + REQUEST_BUDGET_MS - Date.now();
+  let lastLog = parsed.data.log;
   for (;;) {
+    // Not enough time left to verify the latest fix here: hand off so the next request recompiles it.
+    if (repairs && remaining() < COMPILE_RESERVE_MS) return continuation(lastLog);
     let compiled;
     try {
       compiled = await dependencies.compile(source, parsed.data.files);
@@ -48,6 +57,7 @@ export async function automaticallyRepairLatex(
       return result(true, repairs ? 'Errors fixed. PDF compiled successfully.' : 'The document already compiles without errors.', '', compiled.pdf, compiled.engine, compiled.via);
     }
     const log = typeof compiled.json?.log === 'string' ? compiled.json.log : '';
+    if (log.trim()) lastLog = log.slice(-16000);
     if (isCompilerTimeout(log)) return result(false, repairs ? 'Recompilation timed out. The targeted fixes are retained, but the PDF could not be verified. Retry Compile.' : timeoutMessage, log);
     if (compiled.statusCode !== 422 || !log.trim()) {
       return result(false, 'Compilation could not be verified. Check compiler availability and try again.', log);
@@ -64,10 +74,15 @@ export async function automaticallyRepairLatex(
       continue;
     }
     if (aiRepairs >= MAX_AI_REPAIR_ROUNDS) return continuation(log);
+    const aiBudget = Math.min(MODEL_FALLBACK_BUDGET_MS, remaining() - 10_000);
+    if (aiBudget < MIN_AI_BUDGET_MS) {
+      if (repairs) return continuation(log);
+      return result(false, 'Compilation used most of the available time, so the assistant could not analyze it in this run. Your source is unchanged. Retry to continue.', log);
+    }
     aiRepairs++;
     let repair: Awaited<ReturnType<typeof repairLatex>>;
     try {
-      repair = await dependencies.repair({ ...parsed.data, source, modelOffset, log: log.length <= 16000 ? log : condenseLatexLog(log) || log.slice(-16000), message: String(compiled.json?.error || 'Compilation failed').slice(0, 2000) }, requestKey);
+      repair = await dependencies.repair({ ...parsed.data, source, modelOffset, log: log.length <= 16000 ? log : condenseLatexLog(log) || log.slice(-16000), message: String(compiled.json?.error || 'Compilation failed').slice(0, 2000) }, requestKey, undefined, aiBudget);
     } catch {
       return result(false, 'The assistant is unavailable. Try again to continue fixing errors.', log);
     }
@@ -226,8 +241,9 @@ async function tryModelsSequentially<T>(
   request: RepairRequest,
   validate: (output: unknown) => T,
   onError: (error: unknown, attempt: RepairAttempt) => 'next' | 'stop',
+  budgetMs = MODEL_FALLBACK_BUDGET_MS,
 ): Promise<{ repair: T; attempt: RepairAttempt } | null> {
-  const deadline = Date.now() + MODEL_FALLBACK_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   for (const attempt of attempts) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
@@ -275,8 +291,8 @@ function describeProviderError(errors: unknown[]): string {
   return 'The AI repair service could not produce a safe correction for this error. Review the highlighted compiler error in the log.';
 }
 
-export async function repairLatex(body: unknown, requestKey?: string, generate?: RepairGenerator) {
-  if (generate) return performRepairLatex(body, requestKey, generate);
+export async function repairLatex(body: unknown, requestKey?: string, generate?: RepairGenerator, budgetMs?: number) {
+  if (generate) return performRepairLatex(body, requestKey, generate, budgetMs);
   const parsed = latexRepairRequestSchema.safeParse(body);
   if (!parsed.success) return { status: 400, json: { error: latexRepairRequestError(parsed.error) } };
   const key = createHash('sha256').update(JSON.stringify([
@@ -284,7 +300,7 @@ export async function repairLatex(body: unknown, requestKey?: string, generate?:
   ])).digest('hex');
   const existing = inFlightRepairs.get(key);
   if (existing) return existing;
-  const pending = performRepairLatex(parsed.data, requestKey);
+  const pending = performRepairLatex(parsed.data, requestKey, undefined, budgetMs);
   inFlightRepairs.set(key, pending);
   try {
     return await pending;
@@ -293,7 +309,7 @@ export async function repairLatex(body: unknown, requestKey?: string, generate?:
   }
 }
 
-async function performRepairLatex(body: unknown, requestKey?: string, generate?: RepairGenerator) {
+async function performRepairLatex(body: unknown, requestKey?: string, generate?: RepairGenerator, budgetMs?: number) {
   const parsed = latexRepairRequestSchema.safeParse(body);
   if (!parsed.success) return { status: 400, json: { error: latexRepairRequestError(parsed.error) } };
   const attempts: RepairAttempt[] = generate
@@ -330,7 +346,7 @@ async function performRepairLatex(body: unknown, requestKey?: string, generate?:
       modelCooldowns.set(attempt.cooldownKey, { until: Date.now() + rateLimitDelayMs(text), daily: isDailyQuotaError(text) });
     }
     return 'next';
-  });
+  }, budgetMs);
   if (winner) {
     modelCooldowns.delete(winner.attempt.cooldownKey);
     return { status: 200, json: { ...winner.repair, modelUsed: winner.attempt.label } };

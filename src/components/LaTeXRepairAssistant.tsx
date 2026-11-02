@@ -72,6 +72,8 @@ export function LaTeXRepairAssistant({ fileName, source, files, signature, diagn
         if (!isOnline()) {
           throw new Error("You're offline. AI repair needs an internet connection — try again once you reconnect.");
         }
+        // A cold start or slow compile can occasionally exceed the function limit; retry once before pausing.
+        for (let attempt = 0; ; attempt++) {
         const response = await fetch('/api/latex-repair', {
           method: 'POST', headers, signal: abort.signal, body: JSON.stringify(batch),
         });
@@ -79,12 +81,14 @@ export function LaTeXRepairAssistant({ fileName, source, files, signature, diagn
         let data;
         try { data = JSON.parse(responseText); } catch { data = null; }
         if (!response.ok) {
-          const deploymentError = /FUNCTION_INVOCATION_FAILED|FUNCTION_INVOCATION_TIMEOUT/.test(responseText);
+          const deploymentError = /FUNCTION_INVOCATION_FAILED|FUNCTION_INVOCATION_TIMEOUT/.test(responseText) || response.status === 504;
+          if (deploymentError && attempt === 0 && !abort.signal.aborted) continue;
           throw new Error(data?.error || (deploymentError
             ? 'The deployed repair API crashed or timed out before returning a result. Check the deployment runtime logs.'
             : `The repair API returned HTTP ${response.status}.`));
         }
         return data;
+        }
       }, abort.signal, setRepairCount);
       if (currentSignature.current !== requestSignature || !onComplete(result, requestSignature)) {
         throw new Error('Your project changed during repair. The result was not applied. Compile the latest source and try again.');
