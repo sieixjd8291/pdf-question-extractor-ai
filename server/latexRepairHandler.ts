@@ -19,6 +19,8 @@ const MAX_REPAIRS = LATEX_MAX_AUTO_REPAIRS;
 export const REQUEST_BUDGET_MS = 270_000;
 const COMPILE_RESERVE_MS = 125_000;
 const MIN_AI_BUDGET_MS = 15_000;
+const MAX_ESCALATIONS = 2;
+const FIRST_FLASH_MODEL_INDEX = 2;
 
 export async function automaticallyRepairLatex(
   body: unknown,
@@ -31,6 +33,7 @@ export async function automaticallyRepairLatex(
   let source = parsed.data.source;
   let repairs = 0;
   let aiRepairs = 0;
+  let escalations = 0;
   let modelOffset = parsed.data.modelOffset ?? 0;
   const maxRepairs = parsed.data.remainingRepairs ?? MAX_REPAIRS;
   const seen = new Set([source]);
@@ -92,11 +95,30 @@ export async function automaticallyRepairLatex(
       return result(false, `${repairs} repair round${repairs === 1 ? '' : 's'} applied automatically, but compilation still fails. ${message}`, log);
     }
     const validated = latexRepairResponseSchema.safeParse(repair.json);
-    if (!validated.success) return result(false, 'The assistant returned an invalid repair. No further changes were made.', log);
-    if (!validated.data.edits.length) return result(false, validated.data.summary, log);
+    // A lite model that stalls (no edits, unusable edits, or a repeated source) is retried
+    // with a stronger model instead of pausing the whole session.
+    const escalate = () => {
+      if (escalations >= MAX_ESCALATIONS || modelOffset >= LATEX_REPAIR_MODELS.length - 1) return false;
+      escalations++;
+      aiRepairs--;
+      modelOffset = Math.max(modelOffset + 1, FIRST_FLASH_MODEL_INDEX);
+      return true;
+    };
+    if (!validated.success) {
+      if (escalate()) continue;
+      return result(false, 'The assistant returned an invalid repair. No further changes were made.', log);
+    }
+    if (!validated.data.edits.length) {
+      if (escalate()) continue;
+      return result(false, validated.data.summary, log);
+    }
     const { source: corrected, applied } = applyApplicableLatexEdits(source, validated.data.edits);
-    if (!applied.length) return result(false, 'The assistant could not safely apply this repair. No further changes were made.', log);
-    if (seen.has(corrected)) return result(false, 'The assistant could not make further progress. Review the remaining compiler error.', log);
+    if (!applied.length || seen.has(corrected)) {
+      if (escalate()) continue;
+      return result(false, !applied.length
+        ? 'The assistant could not safely apply this repair. No further changes were made.'
+        : 'The assistant could not make further progress. Review the remaining compiler error.', log);
+    }
     seen.add(corrected);
     source = corrected;
     const modelUsed = 'modelUsed' in repair.json ? repair.json.modelUsed : undefined;

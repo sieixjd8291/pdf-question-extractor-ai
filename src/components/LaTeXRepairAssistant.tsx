@@ -38,6 +38,13 @@ export function LaTeXRepairAssistant({ fileName, source, files, signature, diagn
     onBusyChange(false);
   }, [onBusyChange]);
   const currentError = diagnostic?.signature === signature ? diagnostic : null;
+  const hasCurrentError = Boolean(currentError);
+  // A successful compile (or edits that invalidate the old error) makes earlier "paused" details stale.
+  useEffect(() => {
+    if (hasCurrentError || controller.current) return;
+    setError('');
+    setStatus('');
+  }, [hasCurrentError, signature]);
   const timedOut = Boolean(currentError && isCompilerTimeout(currentError.log));
   const canAnalyze = !busy && !compiling && currentError?.repairable && Boolean(currentError.log.trim());
 
