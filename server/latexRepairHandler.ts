@@ -9,6 +9,12 @@ export const LATEX_REPAIR_MODELS = [
   'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
   'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
 ] as const;
+// Vercel AI Gateway fallbacks (zero-config on Vercel) keep repair running without a Gemini key
+// or after the user's Gemini quota is exhausted.
+export const GATEWAY_REPAIR_MODELS = [
+  'google/gemini-3.5-flash-lite', 'deepseek/deepseek-v4-flash', 'google/gemini-3.5-flash', 'openai/gpt-5.4-mini',
+] as const;
+export const REPAIR_MODEL_LABELS: readonly string[] = [...LATEX_REPAIR_MODELS, ...GATEWAY_REPAIR_MODELS];
 export const MAX_AI_REPAIR_ROUNDS = 2;
 export const MODEL_TIMEOUT_MS = 45000;
 export const MODEL_FALLBACK_BUDGET_MS = 90000;
@@ -98,7 +104,7 @@ export async function automaticallyRepairLatex(
     // A lite model that stalls (no edits, unusable edits, or a repeated source) is retried
     // with a stronger model instead of pausing the whole session.
     const escalate = () => {
-      if (escalations >= MAX_ESCALATIONS || modelOffset >= LATEX_REPAIR_MODELS.length - 1) return false;
+      if (escalations >= MAX_ESCALATIONS || modelOffset >= REPAIR_MODEL_LABELS.length - 1) return false;
       escalations++;
       aiRepairs--;
       modelOffset = Math.max(modelOffset + 1, FIRST_FLASH_MODEL_INDEX);
@@ -122,7 +128,7 @@ export async function automaticallyRepairLatex(
     seen.add(corrected);
     source = corrected;
     const modelUsed = 'modelUsed' in repair.json ? repair.json.modelUsed : undefined;
-    const usedIndex = LATEX_REPAIR_MODELS.findIndex(model => model === modelUsed);
+    const usedIndex = REPAIR_MODEL_LABELS.indexOf(String(modelUsed));
     // Keep a model that makes safe progress; provider failures already trigger fallback.
     modelOffset = Math.max(modelOffset, usedIndex);
     repairs++;
@@ -165,6 +171,11 @@ function repairAttempts(requestKey?: string): RepairAttempt[] {
     const google = createGoogleGenerativeAI({ apiKey });
     for (const model of LATEX_REPAIR_MODELS) {
       attempts.push({ label: model, cooldownKey: `${createHash('sha256').update(apiKey).digest('hex')}:${model}`, run: (request, signal) => generateWith(google(model), request, signal) });
+    }
+  }
+  if (process.env.LATEX_REPAIR_DISABLE_GATEWAY !== '1') {
+    for (const model of GATEWAY_REPAIR_MODELS) {
+      attempts.push({ label: model, cooldownKey: `gateway:${model}`, run: (request, signal) => generateWith(model, request, signal) });
     }
   }
   return attempts;
@@ -389,7 +400,11 @@ async function performRepairLatex(body: unknown, requestKey?: string, generate?:
     ? LATEX_REPAIR_MODELS.map(model => ({ label: model, cooldownKey: `test:${model}`, run: (request: RepairRequest, signal: AbortSignal) => generate(model, request, signal) }))
     : repairAttempts(requestKey);
   if (!attempts.length) return { status: 401, json: { error: MISSING_GEMINI_KEY_MESSAGE } };
-  const prioritizedAttempts = attempts.slice(parsed.data.modelOffset ?? 0);
+  const offset = parsed.data.modelOffset ?? 0;
+  const prioritizedAttempts = attempts.filter(attempt => {
+    const index = REPAIR_MODEL_LABELS.indexOf(attempt.label);
+    return index < 0 || index >= offset;
+  });
   const errors: unknown[] = [];
   const compactLog = condenseLatexLog(parsed.data.log) || parsed.data.log;
   const prompt = JSON.stringify(buildRepairPayload({ ...parsed.data, log: compactLog }));
@@ -413,7 +428,11 @@ async function performRepairLatex(body: unknown, requestKey?: string, generate?:
   }, (error, attempt) => {
     errors.push(error);
     const text = errorText(error);
-    if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|\b401\b|\b403\b/i.test(text)) return 'stop';
+    if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|\b401\b|\b403\b/i.test(text)) {
+      // A bad Gemini key affects every direct Gemini model; skip them but still try the gateway.
+      for (const other of attempts) if (!other.cooldownKey.startsWith('gateway:')) modelCooldowns.set(other.cooldownKey, { until: Date.now() + 60_000, daily: false });
+      return attempt.cooldownKey.startsWith('gateway:') ? 'stop' : 'next';
+    }
     if (isRateLimitError(text)) {
       if (modelCooldowns.size >= 256) modelCooldowns.delete(modelCooldowns.keys().next().value!);
       modelCooldowns.set(attempt.cooldownKey, { until: Date.now() + rateLimitDelayMs(text), daily: isDailyQuotaError(text) });

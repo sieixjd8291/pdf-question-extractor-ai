@@ -15,7 +15,7 @@ export const latexRepairRequestSchema = z.object({
   log: z.string().min(1).max(16000),
   files: z.array(z.object({ name: z.string().max(250), content: z.string().max(LATEX_REPAIR_SOURCE_LIMIT) })).max(20),
   remainingRepairs: z.number().int().min(0).max(LATEX_MAX_AUTO_REPAIRS).optional(),
-  modelOffset: z.number().int().min(0).max(5).optional(),
+  modelOffset: z.number().int().min(0).max(20).optional(),
 }).refine(value => value.files.reduce((size, file) => size + file.content.length, value.source.length) <= LATEX_REPAIR_CONTEXT_LIMIT, 'Project context exceeds 600,000 characters.');
 
 export function latexRepairRequestError(error: z.ZodError): string {
@@ -47,7 +47,7 @@ export const latexAutoRepairResponseSchema = z.object({
   via: z.enum(['server', 'remote']).optional(),
   durationMs: z.number().nonnegative(),
   continueRepair: z.boolean().optional(),
-  modelOffset: z.number().int().min(0).max(5).optional(),
+  modelOffset: z.number().int().min(0).max(20).optional(),
 });
 
 export type LatexAutoRepairResult = z.infer<typeof latexAutoRepairResponseSchema>;

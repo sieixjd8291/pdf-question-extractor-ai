@@ -54,12 +54,19 @@ const PdfPage: React.FC<PdfPageProps> = ({
     return () => observer.disconnect();
   }, [pageNumber, onVisible]);
 
+  useEffect(() => {
+    setIsRendered(false);
+  }, [pdfDoc]);
+
   // Render page when visible or when scale changes
   useEffect(() => {
     if (!isVisible || !pdfDoc) return;
     let isCancelled = false;
 
-    const render = async () => {
+    // Render into a fresh offscreen canvas and copy it over only when complete. Reusing the
+    // visible canvas while a previous render is still cancelling makes pdf.js reject the new
+    // render, which left a blank white page after zoom/resize/recompile.
+    const render = async (attempt = 0): Promise<void> => {
       try {
         if (activeRenderTaskRef.current) {
           try {
@@ -73,32 +80,32 @@ const PdfPage: React.FC<PdfPageProps> = ({
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const viewport = page.getViewport({ scale: scale * dpr });
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (!ctx) return;
+        const offscreen = document.createElement('canvas');
+        offscreen.width = Math.floor(viewport.width);
+        offscreen.height = Math.floor(viewport.height);
+        const offCtx = offscreen.getContext('2d', { alpha: false });
+        if (!offCtx) return;
+        offCtx.fillStyle = '#ffffff';
+        offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        const renderTask = page.render({ canvasContext: offCtx, viewport });
+        activeRenderTaskRef.current = renderTask;
+        await renderTask.promise;
+        if (activeRenderTaskRef.current === renderTask) activeRenderTaskRef.current = null;
+
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d', { alpha: false });
+        if (isCancelled || !canvas || !ctx) return;
+        canvas.width = offscreen.width;
+        canvas.height = offscreen.height;
         canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
         canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
-
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const renderTask = page.render({
-          canvasContext: ctx,
-          viewport,
-        });
-        activeRenderTaskRef.current = renderTask;
-
-        await renderTask.promise;
-        if (!isCancelled) {
-          setIsRendered(true);
-        }
+        ctx.drawImage(offscreen, 0, 0);
+        setIsRendered(true);
       } catch (err: any) {
-        if (err?.name !== 'RenderingCancelledException') {
-          console.warn(`Render notice on PDF page ${pageNumber}:`, err);
-        }
+        if (err?.name === 'RenderingCancelledException' || isCancelled) return;
+        if (attempt < 2) return render(attempt + 1);
+        console.warn(`Render notice on PDF page ${pageNumber}:`, err);
       }
     };
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, Sparkles, X } from 'lucide-react';
 import { isCompilerTimeout, latexRepairRequestError, latexRepairRequestSchema, type LatexAutoRepairResult, type LatexDiagnostic } from '../lib/latexRepair';
 import { runLatexRepairSession } from '../lib/latexRepairSession';
-import { geminiAuthHeaders, hasGeminiApiKey } from '../lib/geminiSettings';
+import { geminiAuthHeaders } from '../lib/geminiSettings';
 import { isOnline } from '../lib/onlineStatus';
 import './LaTeXRepairAssistant.css';
 
@@ -50,11 +50,6 @@ export function LaTeXRepairAssistant({ fileName, source, files, signature, diagn
 
   const analyze = async (automatic = false) => {
     if (!canAnalyze || !currentError || controller.current) return;
-    if (!hasGeminiApiKey()) {
-      setStatus('');
-      setError('Enter your Gemini API key in Settings to analyze and fix errors.');
-      return;
-    }
     const request = latexRepairRequestSchema.safeParse({ source, fileName, files, message: currentError.message.slice(0, 2000), log: currentError.log.slice(-16000) });
     if (!request.success) {
       setError(latexRepairRequestError(request.error));
