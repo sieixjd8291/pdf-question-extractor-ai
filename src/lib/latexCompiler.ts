@@ -65,7 +65,7 @@ async function compileOnServer(
 
   const data = await res.json().catch(() => null) as { error?: string; log?: string } | null;
   // 422 means the LaTeX document itself contains syntax or package errors
-  if (res.status === 422 || res.status === 504 || res.status === 400 || res.status === 413) {
+  if (res.status === 422 || res.status === 400 || res.status === 413) {
     throw new LaTeXCompileError(
       data?.error || 'LaTeX compilation failed.',
       data?.log || '',
@@ -132,6 +132,9 @@ async function compileOnWeb(
     log = captured || parsed?.log || parsed?.error || detail;
   } catch {
     /* raw text */
+  }
+  if (!/This is (?:pdfTeX|XeTeX|LuaHBTeX|LuaTeX|e-TeX)|^!\s|LaTeX (?:Error|Warning)|\.tex:\d+:|No pages of output|Emergency stop|Fatal error occurred|latexmk/im.test(log)) {
+    throw new LaTeXCompileError(`The online LaTeX compiler is temporarily unavailable (HTTP ${res.status}). Your source was not changed.`, '', 'none');
   }
   throw new LaTeXCompileError('LaTeX compilation failed.', log, 'web');
 }

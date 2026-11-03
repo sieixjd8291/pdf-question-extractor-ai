@@ -870,7 +870,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
     } catch (err) {
       if (seq !== compileSeq.current) return;
       const latexErr = err instanceof LaTeXCompileError ? err : null;
-      const repairable = Boolean(latexErr && latexErr.via !== 'none' && latexErr.log.trim());
+      const repairable = Boolean(latexErr && latexErr.via !== 'none' && latexErr.log.trim() && hasFatalTexError(latexErr.log));
       setCompileError({
         message: latexErr?.message || (err instanceof Error ? err.message : 'Compilation failed.'),
         log: latexErr?.log || '',
@@ -888,7 +888,7 @@ export function LaTeXStudio({ initialProjectId, autoRepair = true }: { initialPr
       if (!isOnline()) toast.info("You're offline — compile again once you reconnect.");
       else if (!repairable) toast.error(latexErr && latexErr.via === 'none'
         ? 'No LaTeX compiler available.'
-        : 'Compilation is unavailable. Open Repair status for details.');
+        : latexErr?.message || 'Compilation is unavailable. Please compile again.');
     } finally {
       if (seq === compileSeq.current) setCompiling(false);
     }
