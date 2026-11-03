@@ -111,6 +111,10 @@ export function detectPreferredCompiler(tex: string): RemoteCompiler {
   return 'pdflatex';
 }
 
+export function looksLikeTexLog(log: string): boolean {
+  return /This is (?:pdfTeX|XeTeX|LuaHBTeX|LuaTeX|e-TeX)|^!\s|LaTeX (?:Error|Warning)|\.tex:\d+:|Output written on|No pages of output|Emergency stop|Fatal error occurred|latexmk|Latexmk/im.test(log);
+}
+
 const NEEDS_UNICODE_ENGINE = /requires either XeTeX or LuaTeX|fontspec error|Package fontspec Error|cannot be used with pdfTeX|Unicode character .* not set up for use with LaTeX|Invalid UTF-8 byte/i;
 
 export async function compileRemote(tex: string, files?: ResourceFile[], compiler: RemoteCompiler = detectPreferredCompiler(tex), triedFallback = false): Promise<CompileOutcome> {
@@ -159,6 +163,18 @@ export async function compileRemote(tex: string, files?: ResourceFile[], compile
     }
 
     const timedOut = /COMPILATION_TIMEOUT|compilation timed out/i.test(log);
+    // Rate limits, overloads and gateway pages are service failures, not errors in the user's LaTeX.
+    if (!timedOut && !looksLikeTexLog(log)) {
+      if (!triedFallback) {
+        clearTimeout(timer);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        return compileRemote(tex, files, compiler, true);
+      }
+      return {
+        statusCode: 503,
+        json: { error: `The online LaTeX compiler is temporarily unavailable (HTTP ${res.status}). Your source was not changed.` },
+      };
+    }
     if (!triedFallback && (timedOut || (compiler === 'pdflatex' && NEEDS_UNICODE_ENGINE.test(log)))) {
       clearTimeout(timer);
       return compileRemote(tex, files, compiler === 'pdflatex' ? 'xelatex' : 'pdflatex', true);
@@ -176,8 +192,12 @@ export async function compileRemote(tex: string, files?: ResourceFile[], compile
       clearTimeout(timer);
       return compileRemote(tex, files, compiler === 'pdflatex' ? 'xelatex' : 'pdflatex', true);
     }
+    if (!isTimeout && !triedFallback) {
+      clearTimeout(timer);
+      return compileRemote(tex, files, compiler, true);
+    }
     return {
-      statusCode: isTimeout ? 504 : 502,
+      statusCode: isTimeout ? 504 : 503,
       json: {
         error: isTimeout
           ? "LaTeX compilation service timed out."
