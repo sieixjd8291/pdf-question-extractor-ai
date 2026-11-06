@@ -32,6 +32,7 @@ export const latexRepairResponseSchema = z.object({
   edits: z.array(z.object({
     before: z.string().min(1).max(8000),
     after: z.string().max(8000),
+    line: z.number().int().min(1).max(500000).optional(),
     reason: z.string().min(1).max(500),
   })).max(40),
 });
@@ -68,14 +69,26 @@ export function repairSignature(fileId: string, files: { id: string; name: strin
 }
 
 /**
- * Applies every safe, uniquely matching edit at once and skips the rest, so one bad
- * suggestion does not throw away all the other fixes in the same response.
+ * Applies safe edits that are unique or anchored to a reported source line, and skips
+ * the rest so one bad suggestion does not discard the other fixes in the response.
  */
 export function applyApplicableLatexEdits(source: string, edits: LatexRepair['edits']): { source: string; applied: LatexRepair['edits']; skipped: number } {
+  const lineStarts = [0];
+  for (let index = source.indexOf('\n'); index >= 0; index = source.indexOf('\n', index + 1)) lineStarts.push(index + 1);
   const candidates = edits.flatMap(edit => {
     if (!edit.before || edit.before === edit.after) return [];
-    const start = source.indexOf(edit.before);
-    if (start < 0 || source.indexOf(edit.before, start + 1) !== -1) return [];
+    let start = -1;
+    if (edit.line && edit.line <= lineStarts.length) {
+      const lineStart = lineStarts[edit.line - 1];
+      const lineEnd = edit.line < lineStarts.length ? lineStarts[edit.line] - 1 : source.length;
+      const anchored = source.indexOf(edit.before, lineStart);
+      if (anchored >= lineStart && anchored < Math.max(lineStart + 1, lineEnd)) start = anchored;
+    }
+    if (start < 0) {
+      const unique = source.indexOf(edit.before);
+      if (unique >= 0 && source.indexOf(edit.before, unique + 1) === -1) start = unique;
+    }
+    if (start < 0) return [];
     const dangerous = /\\(?:(?:write18|openout|read|catcode|directlua|special)\b|(?:input|include)\s*(?:\{\s*)?["']?\|)/g;
     if ((edit.after.match(dangerous)?.length ?? 0) > (edit.before.match(dangerous)?.length ?? 0)) return [];
     return [{ start, end: start + edit.before.length, edit }];

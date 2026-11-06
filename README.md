@@ -113,6 +113,8 @@ Errors show the tail of the compiler log inline, so broken documents are debugga
 
 AI features (AI chapter mapping, AI chapter-title detection, page analysis) call Gemini through the app's API endpoints. The model priority chain is **`gemini-3.5-flash-lite` first**, with automatic fallback to **`gemini-3.1-flash-lite`** only when the primary model fails. Override the IDs with `GEMINI_PRIMARY_MODEL` / `GEMINI_FALLBACK_MODEL`.
 
+LaTeX repair uses a separate multi-provider chain: non-Google models through Vercel AI Gateway run first, followed by Gateway Google models and any configured direct Gemini key. Large documents are sent as bounded, line-numbered error excerpts rather than whole-project payloads. Line-targeted edits handle repeated LaTeX lines safely, provider quota failures trigger automatic fallback, and completed fixes are retained if a later provider fails.
+
 ### User-supplied API keys (recommended)
 
 Each user can paste their own Gemini API key in **Settings → Gemini AI** (gear icon):
