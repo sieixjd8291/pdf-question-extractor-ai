@@ -70,7 +70,7 @@ import {
   type DetectionSnapEngine,
 } from '../lib/documentDetectionClient';
 import type { DocumentDetectionResult } from '../lib/precisionDetection';
-import { automaticDocumentQuad } from '../lib/automaticDocumentCrop';
+import { automaticDocumentQuad, manualDetectQuad } from '../lib/automaticDocumentCrop';
 import { renderScanPreviewCanvas, clearScannerPreviews } from '../lib/scannerPreview';
 import { CropMagnifier } from './CropMagnifier';
 import {
@@ -2208,33 +2208,61 @@ export function CamScanner({ qualityPreset = 'balanced', customQuality = 80, pag
     }
   };
 
+  const cropAllRunningRef = useRef(false);
   const autoCropAllPages = async () => {
-    if (pages.length === 0) return;
+    if (pages.length === 0 || cropAllRunningRef.current) return;
+    cropAllRunningRef.current = true;
+    const targets = pages.slice();
     let croppedCount = 0;
+    let keptManual = 0;
+    let failedCount = 0;
     try {
-      for (let i = 0; i < pages.length; i++) {
-        const p = pages[i];
-        if (p.cropRevision > 0) continue; // never overwrite a crop the user set by hand
-        setBusy(`Detecting page edges ${i + 1} of ${pages.length}…`);
-        const result = await detectDocumentCached(p.originalUrl, p.rotation);
-        const quad = automaticDocumentQuad(result, p.sourceKind, true);
-        if (!quad) continue;
-        croppedCount++;
-        setPages((prev) => prev.map((item) =>
-          item.id === p.id && item.originalUrl === p.originalUrl && item.rotation === p.rotation ? { ...item, quad } : item
-        ));
+      // Let any import-time detection still in the queue finish first so the two never race.
+      await autoCropQueueRef.current.catch(() => undefined);
+      for (let i = 0; i < targets.length; i++) {
+        const p = targets[i];
+        if (p.cropRevision > 0) { keptManual++; continue; } // never overwrite a crop the user set by hand
+        setBusy(`Detecting page edges ${i + 1} of ${targets.length}…`);
+        // One unreadable page must not stop the rest of the batch.
+        try {
+          let result = await detectDocumentCached(p.originalUrl, p.rotation);
+          let quad = manualDetectQuad(result);
+          if (!quad) {
+            // A cached miss may come from a degraded run; retry once from scratch.
+            releaseDocumentDetection(p.originalUrl);
+            result = await detectDocumentCached(p.originalUrl, p.rotation);
+            quad = manualDetectQuad(result);
+          }
+          if (!quad) continue;
+          const applied = quad;
+          croppedCount++;
+          pageDetectionVersionRef.current.set(p.id, (pageDetectionVersionRef.current.get(p.id) ?? 0) + 1);
+          setPages((prev) => prev.map((item) =>
+            item.id === p.id && item.originalUrl === p.originalUrl && item.rotation === p.rotation && item.cropRevision === 0
+              ? { ...item, quad: applied }
+              : item
+          ));
+          if (cropModeRef.current && activePageRef.current?.id === p.id && !cropDragRef.current) setCropDraft(applied);
+        } catch (err) {
+          failedCount++;
+          console.error('Auto crop failed for page', i + 1, err);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
       displayedSigRef.current = null;
       previewReadyRef.current = false;
+      const total = targets.length;
       if (croppedCount > 0) {
-        toast.success(`Auto-cropped ${croppedCount} of ${pages.length} page${pages.length === 1 ? '' : 's'}.`);
+        const extra = keptManual > 0 ? ` ${keptManual} hand-cropped page${keptManual === 1 ? '' : 's'} kept.` : '';
+        toast.success(`Auto-cropped ${croppedCount} of ${total} page${total === 1 ? '' : 's'}.${extra}`);
+      } else if (keptManual === total) {
+        toast.info('All pages already have a crop you set by hand.');
       } else {
         toast.info('No clear page edges found. Open Crop to set them manually.');
       }
-    } catch (err: any) {
-      console.error('Auto crop all failed:', err);
-      toast.error('Auto-crop failed on one or more pages.');
+      if (failedCount > 0) toast.error(`Could not analyze ${failedCount} page${failedCount === 1 ? '' : 's'}.`);
     } finally {
+      cropAllRunningRef.current = false;
       setBusy(null);
     }
   };

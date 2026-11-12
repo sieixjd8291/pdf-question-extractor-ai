@@ -20,15 +20,36 @@ function insetEdgeCount(q: ScanQuad): number {
   }).length;
 }
 
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+/**
+ * The outline the manual "Auto detect" button applies, for any page kind.
+ * Corners are clamped into the image instead of rejecting the whole outline,
+ * and only degenerate or whole-image results are dropped.
+ */
+export function manualDetectQuad(result: DocumentDetectionResult): ScanQuad | null {
+  const q = result.quad;
+  if (!q) return null;
+  const points = [q.tl, q.tr, q.br, q.bl];
+  if (points.some(point => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+  const clamped: ScanQuad = {
+    tl: { x: clamp01(q.tl.x), y: clamp01(q.tl.y) },
+    tr: { x: clamp01(q.tr.x), y: clamp01(q.tr.y) },
+    br: { x: clamp01(q.br.x), y: clamp01(q.br.y) },
+    bl: { x: clamp01(q.bl.x), y: clamp01(q.bl.y) },
+  };
+  const area = quadArea(clamped);
+  return area >= 0.02 && area < 0.995 ? clamped : null;
+}
+
 /** Only verified page boundaries are applied without the user's review. */
 export function automaticDocumentQuad(result: DocumentDetectionResult, sourceKind: SourceKind, matchManualDetect = false): ScanQuad | null {
   const q = result.quad;
   // Auto-crop setting: apply the same outline the manual "Auto detect" button would, so photos never need that extra click.
-  if (matchManualDetect && sourceKind === 'photo' && q && isSaneQuad(q) &&
-      Object.values(q).every(point => Number.isFinite(point.x) && Number.isFinite(point.y) &&
-        point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)) {
-    const area = quadArea(q);
-    return area >= 0.08 && area < 0.995 && insetEdgeCount(q) >= 1 ? q : null;
+  if (matchManualDetect && sourceKind === 'photo') {
+    const manual = manualDetectQuad(result);
+    if (manual && isSaneQuad(manual) && quadArea(manual) >= 0.05) return manual;
+    return null;
   }
   if (!q || result.quality !== 'strong' || !isSaneQuad(q)) return null;
   if (Object.values(q).some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
